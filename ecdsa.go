@@ -7,7 +7,45 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"strconv"
+	"strings"
 )
+
+type Curve uint
+
+const (
+	P224 Curve = iota
+	P256
+	P384
+	P521
+)
+
+func parseEcdsaSize(curve string) (c Curve, err error) {
+	// Replaces the "P" prefix if provided.
+	size := strings.Replace(strings.ToUpper(curve), "P", "", 1)
+	i, err := strconv.ParseInt(size, 10, 16)
+	if err != nil {
+		return
+	}
+
+	switch i {
+	case 224:
+		c = P224
+
+	case 256:
+		c = P256
+
+	case 384:
+		c = P384
+
+	case 521:
+		c = P521
+
+	default:
+		err = errors.New("no such curve")
+	}
+	return
+}
 
 // CreateEcdsaPrivateKey creates an ECDSA private key.
 func (c *Certificate) CreateEcdsaPrivateKey(curve Curve) (err error) {
@@ -21,6 +59,8 @@ func (c *Certificate) CreateEcdsaPrivateKey(curve Curve) (err error) {
 		cv = elliptic.P384()
 	case P521:
 		cv = elliptic.P521()
+	default:
+		return errors.New("no such curve implemented")
 	}
 
 	c.mx.Lock()

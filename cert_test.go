@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/pem"
+	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,13 +24,19 @@ func defaultOpts() Options {
 		Locality:           "Test-Locality",
 		DNSNames:           []string{"test.example.com"},
 		IsCA:               false,
-		NotBefore:          ts,
-		NotAfter:           ts.Add(24 * 365 * time.Hour),
+		Expiration: Expiration{
+			NotBefore: ts,
+			NotAfter:  ts.Add(24 * 365 * time.Hour),
+		},
 	}
 }
 
 func TestCertificate(t *testing.T) {
 	t.Parallel()
+
+	c, err := New(nil)
+	r.Error(t, err)
+	r.Nil(t, c)
 
 	var renewed = time.UnixMilli(1670281939000).UTC()
 	opts := defaultOpts()
@@ -38,7 +47,36 @@ func TestCertificate(t *testing.T) {
 		return
 	}
 
-	c := newRsaCert()
+	// Test x509 field validation.
+	c = newRsaCert()
+	o := defaultOpts()
+	v := reflect.Indirect(reflect.ValueOf(&o))
+	fieldNum := v.NumField()
+	for i := 0; i < fieldNum; i++ {
+		f := v.Field(i)
+		fType := f.Type()
+		fTypeName := f.Type().String()
+
+		if fTypeName == "bool" {
+			continue
+		}
+
+		fVal := f.Interface()
+		if fTypeName == "[]string" {
+			f.Set(reflect.Indirect(reflect.ValueOf([]string{
+				"", "", "", "", "", "", "", "", "", "",
+				"", "", "", "", "", "", "", "", "", "", "",
+			})))
+		} else {
+			f.Set(reflect.Zero(fType))
+		}
+
+		c, err = New(&o)
+		r.Error(t, err, v.Type().Field(i).Name)
+		f.Set(reflect.ValueOf(fVal))
+	}
+
+	c = newRsaCert()
 	r.NoError(t, c.SignSelf())
 	r.True(t, c.isSigned)
 	r.Error(t, c.SignSelf())
@@ -112,6 +150,80 @@ func TestCertificate(t *testing.T) {
 	r.Exactly(t, rn.ID, id)
 	r.Exactly(t, rn.SignerID, ca.ID)
 	r.NotEqual(t, xCert.SerialNumber, sn)
+
+	// Test invalid algorithms.
+	c, err = New(&opts)
+	r.NoError(t, err)
+	r.Error(t, c.CreateEcdsaPrivateKey(Curve(math.MaxUint)))
+
+	c, err = New(&opts)
+	r.NoError(t, err)
+	r.NoError(t, c.CreateEcdsaPrivateKey(P256))
+	r.NoError(t, c.SignSelf())
+	c.Algorithm = math.MaxUint
+	r.Error(t, c.LoadUnsafePrivateKey())
+}
+
+func TestCertificate_CreatePrivateKey(t *testing.T) {
+	t.Parallel()
+
+	// Test algo to string.
+	r.Exactly(t, "None", AlgorithmToString(Algorithm(0)))
+	r.Exactly(t, "RSA", AlgorithmToString(Algorithm(1)))
+	r.Exactly(t, "ECDSA", AlgorithmToString(Algorithm(2)))
+	r.Exactly(t, "ED25591", AlgorithmToString(Algorithm(3)))
+	r.Exactly(t, "None", AlgorithmToString(Algorithm(0)))
+
+	// Test private key creation from string.
+	opts := defaultOpts()
+	rsaKey := AlgorithmToString(Rsa)
+	ecdsaKey := AlgorithmToString(Ecdsa)
+	edKey := AlgorithmToString(Ed25591)
+	cases := []string{
+		rsaKey + ".1024",
+		rsaKey + ".2048",
+		rsaKey + ".4096",
+		ecdsaKey + ".P224",
+		ecdsaKey + ".P256",
+		ecdsaKey + ".P384",
+		ecdsaKey + ".P521",
+		edKey,
+	}
+
+	for _, c := range cases {
+		// Test upper case.
+		crt, err := New(&opts)
+		r.NoError(t, err)
+		r.NoError(t, crt.CreatePrivateKey(c))
+
+		// Test lower case.
+		crt, err = New(&opts)
+		r.NoError(t, err)
+		r.NoError(t, crt.CreatePrivateKey(strings.ToLower(c)))
+
+		// Test invalid, no and wrong delimiter.
+		if c != edKey {
+			crt, err = New(&opts)
+			r.NoError(t, err)
+			r.Error(t, crt.CreatePrivateKey(strings.ReplaceAll(c, ".", "")))
+
+			crt, err = New(&opts)
+			r.NoError(t, err)
+			r.Error(t, crt.CreatePrivateKey(strings.ReplaceAll(c, ".", ",")))
+		}
+	}
+
+	// Test too many args.
+	crt, err := New(&opts)
+	r.NoError(t, err)
+	r.Error(t, crt.CreatePrivateKey(cases[0]+".1"))
+	r.Error(t, crt.CreatePrivateKey(cases[3]+".1"))
+
+	// Test unavailable sizes.
+	crt, err = New(&opts)
+	r.NoError(t, err)
+	r.Error(t, crt.CreatePrivateKey(cases[0]+"1"))
+	r.Error(t, crt.CreatePrivateKey(cases[3]+"1"))
 }
 
 func TestCertificate_Rsa(t *testing.T) {
@@ -277,6 +389,9 @@ func TestCertificate_ParseX509(t *testing.T) {
 	xCert2, err := x509.ParseCertificate([]byte(c.Der))
 	r.NoError(t, err)
 	r.Exactly(t, xCert, xCert2)
+	xCert3, err := ParseX509([]byte(c.Der))
+	r.NoError(t, err)
+	r.Exactly(t, xCert, xCert3)
 }
 
 func TestCertificate_NilCerts(t *testing.T) {

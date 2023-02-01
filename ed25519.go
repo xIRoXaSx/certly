@@ -16,11 +16,11 @@ func (c *Certificate) CreateEd25519PrivateKey() (err error) {
 
 	cb := make([]byte, ed25519.SeedSize)
 	read, err := rand.Reader.Read(cb)
-	if read != ed25519.SeedSize {
-		return errors.New("did not receive expected size of ed25591 random")
-	}
 	if err != nil {
 		return
+	}
+	if read != ed25519.SeedSize {
+		return errors.New("did not receive expected size of ed25591 random")
 	}
 	key := ed25519.NewKeyFromSeed(cb)
 	c.ed25519 = &key

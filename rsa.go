@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"strconv"
 )
 
 type RsaSize int
@@ -16,8 +17,34 @@ const (
 	RSA4096 RsaSize = 4096
 )
 
+func parseRsaSize(size string) (s RsaSize, err error) {
+	i, err := strconv.ParseInt(size, 10, 32)
+	if err != nil {
+		return
+	}
+
+	switch i {
+	case int64(RSA1024):
+		s = RSA1024
+
+	case int64(RSA2048):
+		s = RSA2048
+
+	case int64(RSA4096):
+		s = RSA4096
+
+	default:
+		err = errors.New("no such size")
+	}
+	return
+}
+
 // CreateRsaPrivateKey creates an RSA private key.
 func (c *Certificate) CreateRsaPrivateKey(size RsaSize) (err error) {
+	if size != RSA1024 && size != RSA2048 && size != RSA4096 {
+		return errors.New("no such rsa size implemented")
+	}
+
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
