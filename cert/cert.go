@@ -20,10 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"cert2go/pkg/assertion"
-
+	"github.com/xiroxasx/certly/cert/assertion"
 	"golang.org/x/crypto/pbkdf2"
-	"gorm.io/gorm"
 )
 
 const (
@@ -47,7 +45,7 @@ const (
 )
 
 type Certificate struct {
-	gorm.Model
+	ID uint
 	// Name is the user specified name for this certificate.
 	Name string
 	// Der is the public certificate in DER format.
