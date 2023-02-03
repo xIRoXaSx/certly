@@ -91,15 +91,15 @@ func TestCertificate(t *testing.T) {
 	// Test encryption and decryption.
 	testPass := "This_Is_Just_A_Simple_Test_Value"
 	pk := c.rsa
-	pkPem := c.EncryptedPrivateKey
+	pkPem := c.PrivateKey
 	r.NoError(t, c.EncryptPrivateKey(testPass))
 	r.NoError(t, c.LoadPrivateKey())
 	c.rsa = nil
-	c.EncryptedPrivateKey = ""
+	c.PrivateKey = ""
 	r.NoError(t, c.DecryptPrivateKey(testPass, Rsa))
 	r.Exactly(t, pk, c.rsa)
 	r.Exactly(t, c.rsa, c.Rsa())
-	r.Exactly(t, pkPem, c.EncryptedPrivateKey)
+	r.Exactly(t, pkPem, c.PrivateKey)
 
 	// Test to sign with CA.
 	// Create CA.

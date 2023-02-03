@@ -52,8 +52,8 @@ type Certificate struct {
 	Name string
 	// Der is the public certificate in DER format.
 	Der string
-	// EncryptedPrivateKey is the raw encrypted private key.
-	EncryptedPrivateKey string
+	// PrivateKey is the raw encrypted private key.
+	PrivateKey string
 	// Algorithm is the used private key algorithm.
 	Algorithm Algorithm
 	// SignerID is the ID of the signing Certificate.
@@ -298,7 +298,7 @@ func (c *Certificate) SetUnsafePrivateKey() (err error) {
 	if err != nil {
 		return
 	}
-	c.EncryptedPrivateKey = string(pemBlk.Bytes)
+	c.PrivateKey = string(pemBlk.Bytes)
 	c.IsUnsafe = true
 	return
 }
@@ -338,7 +338,7 @@ func (c *Certificate) EncryptPrivateKey(pass string) (err error) {
 	enc := gcm.Seal(nonce, nonce, pemBlk.Bytes, nil)
 	c.Salt = string(salt)
 	c.Nonce = string(nonce)
-	c.EncryptedPrivateKey = string(enc)
+	c.PrivateKey = string(enc)
 	return
 }
 
@@ -436,7 +436,7 @@ func (c *Certificate) LoadPrivateKey() (err error) {
 
 	c.privateKeyBlock = Block{
 		Algorithm: c.Algorithm,
-		Data:      c.EncryptedPrivateKey,
+		Data:      c.PrivateKey,
 	}
 	return
 }
@@ -455,7 +455,7 @@ func (c *Certificate) LoadUnsafePrivateKey() (err error) {
 	)
 	switch c.Algorithm {
 	case Rsa:
-		key, err = x509.ParsePKCS8PrivateKey([]byte(c.EncryptedPrivateKey))
+		key, err = x509.ParsePKCS8PrivateKey([]byte(c.PrivateKey))
 		if err != nil {
 			return
 		}
@@ -465,7 +465,7 @@ func (c *Certificate) LoadUnsafePrivateKey() (err error) {
 		}
 
 	case Ecdsa:
-		key, err = x509.ParseECPrivateKey([]byte(c.EncryptedPrivateKey))
+		key, err = x509.ParseECPrivateKey([]byte(c.PrivateKey))
 		if err != nil {
 			return
 		}
@@ -475,7 +475,7 @@ func (c *Certificate) LoadUnsafePrivateKey() (err error) {
 		}
 
 	case Ed25591:
-		key, err = x509.ParsePKCS8PrivateKey([]byte(c.EncryptedPrivateKey))
+		key, err = x509.ParsePKCS8PrivateKey([]byte(c.PrivateKey))
 		if err != nil {
 			return
 		}
@@ -554,7 +554,7 @@ func (c *Certificate) CopyPropertiesTo(dst *Certificate, copyUnexported bool) {
 	dst.Name = c.Name
 	dst.Algorithm = c.Algorithm
 	dst.SignerID = c.SignerID
-	dst.EncryptedPrivateKey = c.EncryptedPrivateKey
+	dst.PrivateKey = c.PrivateKey
 	dst.Iterations = c.Iterations
 	if copyUnexported {
 		dst.rsa = c.rsa
