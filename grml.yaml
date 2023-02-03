@@ -1,0 +1,42 @@
+# =~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=
+#                        __  .__
+#     ____  ____________/  |_|  | ___.__.
+#   _/ ___\/ __ \_  __ \   __\  |<   |  |
+#   \  \__\  ___/|  | \/|  | |  |_\___  |
+#    \___  >___  >__|   |__| |____/ ____|
+#        \/    \/                 \/
+# =~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=
+#
+# > What is this file used for?
+#    This file is designed to run with grml to simplify various tasks.
+#    Head over to https://github.com/desertbit/grml, get / compile and setup grml.
+#    Afterwards you can use these tasks.
+
+version: 1
+project: certly
+
+env:
+  VERSION:  0.1.0
+  GO_VERSION: "1.20"
+
+  # Go test packages
+  GO_TEST_PKGS: ./...
+
+interpreter: sh
+
+commands:
+  test:
+    help: test all packages
+    exec: |
+      go test -cover ${GO_TEST_PKGS}
+    commands:
+      docker:
+        help: test all packages via go's docker image.
+        exec: |
+          sudo docker run \
+            -v="$PWD:/data:ro" \
+            -w=/data \
+            --rm \
+            golang:${GO_VERSION} \
+            mkdir -p ~/.config/cert2go \
+              && go test -cover ${GO_TEST_PKGS}
