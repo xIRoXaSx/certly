@@ -1,0 +1,33 @@
+# This workflow will build, test and check the code coverage of this project.
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: "1.20"
+
+      - name: Test
+        env:
+          COVERAGE_THRESHOLD: 80.0
+        run: |
+          path='cover.out'
+          go test -coverprofile="$path" ./...
+          covered=$(go tool cover -func="$path" | grep total | awk '{print $3}' | sed 's/%//')
+          covered=$(echo "$covered $COVERAGE_THRESHOLD" | awk '{print ($1 > $2)}')
+          [[ $covered ]] \
+            && echo "OK: tests succeeded"; exit 0 \
+            || echo "FAIL: Coverage below set threshold ($covered < $COVERAGE_THRESHOLD)."; exit 1

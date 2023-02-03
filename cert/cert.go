@@ -20,10 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"cert2go/pkg/assertion"
-
+	"github.com/xiroxasx/certly/cert/assertion"
 	"golang.org/x/crypto/pbkdf2"
-	"gorm.io/gorm"
 )
 
 const (
@@ -31,8 +29,6 @@ const (
 	PrivateKeyKey    = "PRIVATE KEY"
 	EcPrivateKeyKey  = "EC PRIVATE KEY"
 	RsaPrivateKeyKey = "RSA PRIVATE KEY"
-	DerKey           = "DER"
-	PemKey           = "PEM"
 
 	// MaxSANLen is not an actual RFC5280 constraint, 4096 should suffice.
 	MaxSANLen                    = 4096
@@ -47,7 +43,7 @@ const (
 )
 
 type Certificate struct {
-	gorm.Model
+	ID uint
 	// Name is the user specified name for this certificate.
 	Name string
 	// Der is the public certificate in DER format.
@@ -212,6 +208,10 @@ func New(opts *Options) (crt *Certificate, err error) {
 		},
 	}
 	err = crt.ValidateTemplate()
+	if err != nil {
+		return
+	}
+	crt.Name = opts.CommonName
 	return
 }
 

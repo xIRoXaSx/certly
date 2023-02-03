@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"cert2go/pkg/assertion"
+	"github.com/xiroxasx/certly/cert/assertion"
 )
 
 func ValidateTime(t time.Time) error {
