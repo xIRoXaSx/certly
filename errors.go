@@ -1,11 +1,25 @@
 package cert
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrNoSuchAlgorithm       = errors.New("no such algorithm implemented")
-	ErrNotOfAesLength        = errors.New("passphrase is not of required length")
+	ErrCipherMsgAuthFailed   = errors.New("message authentication failed")
 	errCertCannotBeNil       = errors.New("certificate to sign cannot be nil")
 	errSignerCannotBeNil     = errors.New("signer cannot be nil")
 	errPrivateKeyCannotBeNil = errors.New("private key cannot be nil")
 )
+
+func mapToCertError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Returned error cannot be unwrapped, compare strings
+	if err.Error() == "cipher: message authentication failed" {
+		return ErrCipherMsgAuthFailed
+	}
+	return err
+}

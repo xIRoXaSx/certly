@@ -90,16 +90,13 @@ func TestCertificate(t *testing.T) {
 
 	// Test encryption and decryption.
 	testPass := "This_Is_Just_A_Simple_Test_Value"
-	tooShortPass := "too_short"
 	pk := c.rsa
 	pkPem := c.EncryptedPrivateKey
-	r.Error(t, c.EncryptPrivateKey(tooShortPass))
 	r.NoError(t, c.EncryptPrivateKey(testPass))
 	r.NoError(t, c.LoadPrivateKey())
 	c.rsa = nil
 	c.EncryptedPrivateKey = ""
 	r.NoError(t, c.DecryptPrivateKey(testPass, Rsa))
-	r.Error(t, c.DecryptPrivateKey(tooShortPass, Rsa))
 	r.Exactly(t, pk, c.rsa)
 	r.Exactly(t, c.rsa, c.Rsa())
 	r.Exactly(t, pkPem, c.EncryptedPrivateKey)
@@ -266,7 +263,6 @@ func TestCertificate_Rsa(t *testing.T) {
 	}
 
 	// Test private key encryption.
-	r.Error(t, c.EncryptPrivateKey(testPass[:len(testPass)-1]))
 	r.NoError(t, c.EncryptPrivateKey(testPass))
 	r.NoError(t, c.LoadPrivateKey())
 	r.Exactly(t, c.GetEncryptedPrivateKey(), c.privateKeyBlock)

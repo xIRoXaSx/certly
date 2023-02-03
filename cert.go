@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -21,6 +22,7 @@ import (
 
 	"cert2go/pkg/assertion"
 
+	"golang.org/x/crypto/pbkdf2"
 	"gorm.io/gorm"
 )
 
@@ -60,6 +62,9 @@ type Certificate struct {
 	IsUnsafe bool
 	// IsCA indicates whether the certificate is a certificate authority or not.
 	IsCA            bool
+	Iterations      uint
+	Nonce           string
+	Salt            string
 	isSigned        bool
 	privateKeyBlock Block
 	ecdsa           *ecdsa.PrivateKey
@@ -301,14 +306,11 @@ func (c *Certificate) SetUnsafePrivateKey() (err error) {
 // EncryptPrivateKey encrypts the private key.
 // Needs either a 16, 24 or 32 byte long passphrase.
 func (c *Certificate) EncryptPrivateKey(pass string) (err error) {
-	if !IsOfAesLength(len(pass)) {
-		return ErrNotOfAesLength
-	}
-
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
-	blk, err := aes.NewCipher([]byte(pass))
+	key, salt := deriveKey([]byte(pass), nil)
+	blk, err := aes.NewCipher(key)
 	if err != nil {
 		return
 	}
@@ -334,19 +336,22 @@ func (c *Certificate) EncryptPrivateKey(pass string) (err error) {
 		return
 	}
 	enc := gcm.Seal(nonce, nonce, pemBlk.Bytes, nil)
+	c.Salt = string(salt)
+	c.Nonce = string(nonce)
 	c.EncryptedPrivateKey = string(enc)
 	return
 }
 
 // DecryptPrivateKey decrypts the private key.
 func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error) {
-	if !IsOfAesLength(len(pass)) {
-		return ErrNotOfAesLength
-	}
+	defer func() {
+		err = mapToCertError(err)
+	}()
 
 	if len(c.privateKeyBlock.Data) == 0 {
 		if c.IsUnsafe {
 			err = c.LoadUnsafePrivateKey()
+			return
 		} else {
 			err = c.LoadPrivateKey()
 		}
@@ -358,7 +363,11 @@ func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error)
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
-	blk, err := aes.NewCipher([]byte(pass))
+	enc := c.privateKeyBlock.Data
+	salt := []byte(c.Salt)
+	nonce := []byte(c.Nonce)
+	derivedKey, _ := deriveKey([]byte(pass), salt)
+	blk, err := aes.NewCipher(derivedKey)
 	if err != nil {
 		return
 	}
@@ -367,10 +376,7 @@ func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error)
 		return
 	}
 
-	enc := c.privateKeyBlock.Data
-	nonce := enc[:gcm.NonceSize()]
-	enc = enc[gcm.NonceSize():]
-	raw, err := gcm.Open(nil, []byte(nonce), []byte(enc), nil)
+	raw, err := gcm.Open(nil, nonce, []byte(enc[gcm.NonceSize():]), nil)
 	if err != nil {
 		return
 	}
@@ -524,6 +530,12 @@ func (c *Certificate) Renew(opts *Options, sc *Certificate) (renewed *Certificat
 	if err != nil {
 		return
 	}
+	defer func() {
+		if err == nil {
+			renewed.Iterations++
+		}
+	}()
+
 	c.CopyPropertiesTo(renewed, true)
 	err = renewed.ValidateTemplate()
 	if err != nil {
@@ -543,6 +555,7 @@ func (c *Certificate) CopyPropertiesTo(dst *Certificate, copyUnexported bool) {
 	dst.Algorithm = c.Algorithm
 	dst.SignerID = c.SignerID
 	dst.EncryptedPrivateKey = c.EncryptedPrivateKey
+	dst.Iterations = c.Iterations
 	if copyUnexported {
 		dst.rsa = c.rsa
 		dst.ecdsa = c.ecdsa
@@ -630,7 +643,13 @@ func ParseCertificateOptions(crt *x509.Certificate) (opts *Options, err error) {
 	}, nil
 }
 
-// IsOfAesLength returns true if len is 16, 24 or 32.
-func IsOfAesLength(len int) bool {
-	return len == 16 || len == 24 || len == 32
+func deriveKey(phrase []byte, salt []byte) (key, s []byte) {
+	if len(salt) == 0 {
+		salt = make([]byte, 8)
+		_, err := rand.Read(salt)
+		if err != nil {
+			return
+		}
+	}
+	return pbkdf2.Key(phrase, salt, 4096, 32, sha256.New), salt
 }
