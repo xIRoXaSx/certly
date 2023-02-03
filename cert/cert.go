@@ -29,8 +29,6 @@ const (
 	PrivateKeyKey    = "PRIVATE KEY"
 	EcPrivateKeyKey  = "EC PRIVATE KEY"
 	RsaPrivateKeyKey = "RSA PRIVATE KEY"
-	DerKey           = "DER"
-	PemKey           = "PEM"
 
 	// MaxSANLen is not an actual RFC5280 constraint, 4096 should suffice.
 	MaxSANLen                    = 4096
@@ -210,6 +208,10 @@ func New(opts *Options) (crt *Certificate, err error) {
 		},
 	}
 	err = crt.ValidateTemplate()
+	if err != nil {
+		return
+	}
+	crt.Name = opts.CommonName
 	return
 }
 
