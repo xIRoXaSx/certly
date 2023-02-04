@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"math"
 	"reflect"
 	"strings"
@@ -34,6 +35,7 @@ func defaultOpts() Options {
 func TestCertificate(t *testing.T) {
 	t.Parallel()
 
+	// Test nil opts cert.
 	c, err := New(nil)
 	r.Error(t, err)
 	r.Nil(t, c)
@@ -71,7 +73,7 @@ func TestCertificate(t *testing.T) {
 			f.Set(reflect.Zero(fType))
 		}
 
-		c, err = New(&o)
+		_, err := New(&o)
 		r.Error(t, err, v.Type().Field(i).Name)
 		f.Set(reflect.ValueOf(fVal))
 	}
@@ -82,7 +84,7 @@ func TestCertificate(t *testing.T) {
 	r.Error(t, c.SignSelf())
 
 	// Test x509 fields.
-	xCert, err := x509.ParseCertificate([]byte(c.Der))
+	xCert, err := x509.ParseCertificate([]byte(c.PublicKey))
 	r.NoError(t, err)
 	parsedOpts, err := ParseCertificateOptions(xCert)
 	r.NoError(t, err)
@@ -117,7 +119,7 @@ func TestCertificate(t *testing.T) {
 	c = newRsaCert()
 	r.NoError(t, c.SignWith(ca))
 	r.True(t, c.isSigned)
-	xCert, err = x509.ParseCertificate([]byte(c.Der))
+	xCert, err = x509.ParseCertificate([]byte(c.PublicKey))
 	r.NoError(t, err)
 	r.NotNil(t, xCert)
 	r.Exactly(t, xCert.Issuer.CommonName, caOpts.CommonName)
@@ -139,7 +141,7 @@ func TestCertificate(t *testing.T) {
 	opts.NotAfter = renewed.Add(24 * 365 * time.Hour)
 	rn, err := c.Renew(&opts, ca)
 	r.NoError(t, err)
-	xCert, err = x509.ParseCertificate([]byte(rn.Der))
+	xCert, err = x509.ParseCertificate([]byte(rn.PublicKey))
 	r.NoError(t, err)
 	r.Exactly(t, xCert.Issuer.CommonName, caOpts.CommonName)
 	r.Greater(t, xCert.NotBefore, nbf)
@@ -159,6 +161,40 @@ func TestCertificate(t *testing.T) {
 	r.NoError(t, c.SignSelf())
 	c.Algorithm = math.MaxUint
 	r.Error(t, c.LoadUnsafePrivateKey())
+}
+
+func TestNewWithIdentifier(t *testing.T) {
+	t.Parallel()
+
+	opts := defaultOpts()
+	id := uint64(100)
+	name := "NewCertificate"
+	c, err := NewWithIdentifier(id, name, &opts)
+	r.NoError(t, err)
+	r.Exactly(t, c.ID, id)
+	r.Exactly(t, c.Name, name)
+
+	c, err = NewWithIdentifier(id, "", &opts)
+	r.Error(t, err)
+	opts.CommonName = ""
+	c, err = NewWithIdentifier(id, name, &opts)
+	r.Error(t, err)
+	opts = defaultOpts()
+}
+
+func TestMapToCertError(t *testing.T) {
+	err := mapToCertError(errors.New("cipher: message authentication failed"))
+	r.ErrorIs(t, err, ErrCipherMsgAuthFailed)
+
+	err = mapToCertError(ErrCipherMsgAuthFailed)
+	r.ErrorIs(t, err, ErrCipherMsgAuthFailed)
+
+	tErr := errors.New("test")
+	err = mapToCertError(tErr)
+	r.ErrorIs(t, err, tErr)
+
+	err = mapToCertError(nil)
+	r.NoError(t, err)
 }
 
 func TestCertificate_CreatePrivateKey(t *testing.T) {
@@ -382,10 +418,10 @@ func TestCertificate_ParseX509(t *testing.T) {
 	r.True(t, c.isSigned)
 	xCert, err := c.ParseX509()
 	r.NoError(t, err)
-	xCert2, err := x509.ParseCertificate([]byte(c.Der))
+	xCert2, err := x509.ParseCertificate([]byte(c.PublicKey))
 	r.NoError(t, err)
 	r.Exactly(t, xCert, xCert2)
-	xCert3, err := ParseX509([]byte(c.Der))
+	xCert3, err := ParseX509([]byte(c.PublicKey))
 	r.NoError(t, err)
 	r.Exactly(t, xCert, xCert3)
 }
