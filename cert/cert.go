@@ -43,17 +43,17 @@ const (
 )
 
 type Certificate struct {
-	ID uint
+	ID uint64
 	// Name is the user specified name for this certificate.
 	Name string
-	// Der is the public certificate in DER format.
-	Der string
+	// PublicKey is the public certificate in DER format.
+	PublicKey string
 	// PrivateKey is the raw encrypted private key.
 	PrivateKey string
 	// Algorithm is the used private key algorithm.
 	Algorithm Algorithm
 	// SignerID is the ID of the signing Certificate.
-	SignerID uint
+	SignerID uint64
 	// IsUnsafe is weather the certificate's private key is encrypted or not.
 	IsUnsafe bool
 	// IsCA indicates whether the certificate is a certificate authority or not.
@@ -118,6 +118,78 @@ type Block struct {
 	Data      string
 }
 
+// New creates a new RFC5280 compliant Certificate.
+// The returned c is validated via Certificate.ValidateTemplate.
+func New(opts *Options) (c *Certificate, err error) {
+	return newCert(opts)
+}
+
+// NewWithIdentifier is like New but assigns the given name and id as well.
+// The returned c is validated via Certificate.ValidateTemplate.
+func NewWithIdentifier(id uint64, name string, opts *Options) (c *Certificate, err error) {
+	c, err = newCert(opts)
+	if err != nil {
+		return
+	}
+	err = ValidateCommonName(name)
+	if err != nil {
+		return
+	}
+	c.ID = id
+	c.Name = name
+	return
+}
+
+func newCert(opts *Options) (c *Certificate, err error) {
+	if opts == nil {
+		return nil, errors.New("options cannot be nil")
+	}
+
+	var (
+		usage    = x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign
+		extUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
+	)
+	if !opts.IsCA {
+		usage = x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment
+	} else {
+		extUsage = append(extUsage, x509.ExtKeyUsageClientAuth)
+	}
+	limit := new(big.Int).Lsh(big.NewInt(1), RFC5280SerialNumberLen)
+	serial, err := rand.Int(rand.Reader, limit)
+	if err != nil {
+		return
+	}
+	cn := opts.CommonName
+	c = &Certificate{
+		IsCA: opts.IsCA,
+		mx:   &sync.Mutex{},
+		template: &x509.Certificate{
+			SerialNumber:          serial,
+			DNSNames:              opts.DNSNames,
+			KeyUsage:              usage,
+			ExtKeyUsage:           extUsage,
+			BasicConstraintsValid: true,
+			NotBefore:             opts.NotBefore,
+			NotAfter:              opts.NotAfter,
+			IsCA:                  opts.IsCA,
+			Subject: pkix.Name{
+				Country:            []string{opts.Country},
+				Organization:       []string{opts.Organization},
+				OrganizationalUnit: []string{opts.OrganizationalUnit},
+				Locality:           []string{opts.Locality},
+				Province:           []string{opts.State},
+				CommonName:         cn,
+			},
+		},
+	}
+	err = c.ValidateTemplate()
+	if err != nil {
+		return
+	}
+	c.Name = cn
+	return
+}
+
 // CreatePrivateKey generates a private key for the certificate from keyType.
 // The keyType is built via the syntax {{Algorithm}}.{{Option}}.
 // The option can be omitted if the type does not have any option.
@@ -164,57 +236,6 @@ func (c *Certificate) CreatePrivateKey(keyType string) (err error) {
 	return
 }
 
-// New creates a new Certificate type.
-// The returned crt is validated via Certificate.ValidateTemplate.
-func New(opts *Options) (crt *Certificate, err error) {
-	if opts == nil {
-		return nil, errors.New("options cannot be nil")
-	}
-
-	var (
-		usage    = x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign
-		extUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
-	)
-	if !opts.IsCA {
-		usage = x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment
-	} else {
-		extUsage = append(extUsage, x509.ExtKeyUsageClientAuth)
-	}
-	limit := new(big.Int).Lsh(big.NewInt(1), RFC5280SerialNumberLen)
-	serial, err := rand.Int(rand.Reader, limit)
-	if err != nil {
-		return
-	}
-	crt = &Certificate{
-		IsCA: opts.IsCA,
-		mx:   &sync.Mutex{},
-		template: &x509.Certificate{
-			SerialNumber:          serial,
-			DNSNames:              opts.DNSNames,
-			KeyUsage:              usage,
-			ExtKeyUsage:           extUsage,
-			BasicConstraintsValid: true,
-			NotBefore:             opts.NotBefore,
-			NotAfter:              opts.NotAfter,
-			IsCA:                  opts.IsCA,
-			Subject: pkix.Name{
-				Country:            []string{opts.Country},
-				Organization:       []string{opts.Organization},
-				OrganizationalUnit: []string{opts.OrganizationalUnit},
-				Locality:           []string{opts.Locality},
-				Province:           []string{opts.State},
-				CommonName:         opts.CommonName,
-			},
-		},
-	}
-	err = crt.ValidateTemplate()
-	if err != nil {
-		return
-	}
-	crt.Name = opts.CommonName
-	return
-}
-
 // SignSelf signs the certificate itself.
 func (c *Certificate) SignSelf() (err error) {
 	return c.sign(c)
@@ -242,7 +263,7 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	certs := []*Certificate{c, sc}
 	for _, cert := range certs {
 		if cert.template == nil {
-			cert.template, err = x509.ParseCertificate([]byte(cert.Der))
+			cert.template, err = x509.ParseCertificate([]byte(cert.PublicKey))
 			if err != nil {
 				return err
 			}
@@ -273,7 +294,7 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	defer c.mx.Unlock()
 
 	c.isSigned = true
-	c.Der = string(der)
+	c.PublicKey = string(der)
 	c.SignerID = sc.ID
 	return
 }
@@ -565,7 +586,7 @@ func (c *Certificate) CopyPropertiesTo(dst *Certificate, copyUnexported bool) {
 }
 
 func (c *Certificate) ParseX509() (crt *x509.Certificate, err error) {
-	return x509.ParseCertificate([]byte(c.Der))
+	return x509.ParseCertificate([]byte(c.PublicKey))
 }
 
 func ParseX509(b []byte) (crt *x509.Certificate, err error) {

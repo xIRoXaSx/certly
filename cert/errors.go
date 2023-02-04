@@ -17,7 +17,6 @@ func mapToCertError(err error) error {
 		return nil
 	}
 
-	// Returned error cannot be unwrapped, compare strings
 	if err.Error() == "cipher: message authentication failed" {
 		return ErrCipherMsgAuthFailed
 	}
