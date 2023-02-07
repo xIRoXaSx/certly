@@ -54,19 +54,17 @@ type Certificate struct {
 	Algorithm Algorithm
 	// SignerID is the ID of the signing Certificate.
 	SignerID uint64
-	// IsUnsafe is weather the certificate's private key is encrypted or not.
-	IsUnsafe bool
 	// IsCA indicates whether the certificate is a certificate authority or not.
 	IsCA            bool
 	Iterations      uint
 	Nonce           string
 	Salt            string
+	releasable      bool
 	isSigned        bool
 	privateKeyBlock Block
 	ecdsa           *ecdsa.PrivateKey
 	rsa             *rsa.PrivateKey
 	ed25519         *ed25519.PrivateKey
-	privateKey      *crypto.PrivateKey
 	template        *x509.Certificate
 	mx              *sync.Mutex
 }
@@ -115,7 +113,7 @@ func AlgorithmToString(a Algorithm) string {
 
 type Block struct {
 	Algorithm Algorithm
-	Data      string
+	Data      []byte
 }
 
 // New creates a new RFC5280 compliant Certificate.
@@ -260,6 +258,23 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 		return errors.New("private key must not be nil")
 	}
 
+	var (
+		pub  crypto.PublicKey
+		priv crypto.PrivateKey
+	)
+	defer func() {
+		pub = nil
+		priv = nil
+	}()
+
+	sc.mx.Lock()
+	defer sc.mx.Unlock()
+
+	if sc != c {
+		c.mx.Lock()
+		defer c.mx.Unlock()
+	}
+
 	certs := []*Certificate{c, sc}
 	for _, cert := range certs {
 		if cert.template == nil {
@@ -270,10 +285,13 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 		}
 	}
 
-	var (
-		pub  crypto.PublicKey
-		priv crypto.PrivateKey
-	)
+	if sc.rsa == nil && sc.ecdsa == nil && sc.ed25519 == nil {
+		err = sc.loadRawPrivateKey([]byte(sc.PrivateKey))
+		if err != nil {
+			return
+		}
+	}
+
 	if sc.rsa != nil {
 		pub = sc.RsaPublicKey()
 		priv = sc.rsa
@@ -289,9 +307,7 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	if err != nil {
 		return
 	}
-
-	c.mx.Lock()
-	defer c.mx.Unlock()
+	priv = nil
 
 	c.isSigned = true
 	c.PublicKey = string(der)
@@ -299,38 +315,39 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	return
 }
 
-// GetEncryptedPrivateKey gets the encrypted private key.
-func (c *Certificate) GetEncryptedPrivateKey() Block {
+// GetPrivateKey gets the private key.
+// The returned Block contains any of the available private key forms (rsa, ...).
+func (c *Certificate) GetPrivateKey() Block {
 	return c.privateKeyBlock
 }
 
+// SetUnsafePrivateKey sets the private key without encrypting it.
 func (c *Certificate) SetUnsafePrivateKey() (err error) {
+	var pb pem.Block
 	c.mx.Lock()
-	defer c.mx.Unlock()
+	defer func() {
+		c.mx.Unlock()
+		pb = pem.Block{}
+		c.autoRelease()
+	}()
 
-	var pemBlk *pem.Block
-	if c.rsa != nil {
-		pemBlk, err = c.RsaToPem()
-	} else if c.ecdsa != nil {
-		pemBlk, err = c.EcdsaToPem()
-	} else {
-		pemBlk, err = c.Ed25519ToPem()
-	}
+	pb, err = c.getPrivateKeyPem()
 	if err != nil {
 		return
 	}
-	c.PrivateKey = string(pemBlk.Bytes)
-	c.IsUnsafe = true
+	c.PrivateKey = string(pb.Bytes)
 	return
 }
 
-// EncryptPrivateKey encrypts the private key.
-// Needs either a 16, 24 or 32 byte long passphrase.
-func (c *Certificate) EncryptPrivateKey(pass string) (err error) {
+// EncryptPrivateKey encrypts the private key with the given pass.
+func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
 	c.mx.Lock()
-	defer c.mx.Unlock()
+	defer func() {
+		c.mx.Unlock()
+		c.autoRelease()
+	}()
 
-	key, salt := deriveKey([]byte(pass), nil)
+	key, salt := deriveKey(pass, nil)
 	blk, err := aes.NewCipher(key)
 	if err != nil {
 		return
@@ -345,6 +362,18 @@ func (c *Certificate) EncryptPrivateKey(pass string) (err error) {
 		return
 	}
 
+	pb, err := c.getPrivateKeyPem()
+	if err != nil {
+		return
+	}
+	enc := gcm.Seal(nonce, nonce, pb.Bytes, nil)
+	c.Salt = string(salt)
+	c.Nonce = string(nonce)
+	c.PrivateKey = string(enc)
+	return
+}
+
+func (c *Certificate) getPrivateKeyPem() (pb pem.Block, err error) {
 	var pemBlk *pem.Block
 	if c.rsa != nil {
 		pemBlk, err = c.RsaToPem()
@@ -353,29 +382,40 @@ func (c *Certificate) EncryptPrivateKey(pass string) (err error) {
 	} else {
 		pemBlk, err = c.Ed25519ToPem()
 	}
-	if err != nil {
-		return
+	pb = *pemBlk
+	return
+}
+
+// LoadPrivateKey loads the private key's Block type.
+// Note that the private key might be encrypted.
+// Get the key via *Certificate.GetPrivateKey or *Certificate.PrivateKey.
+func (c *Certificate) LoadPrivateKey() (err error) {
+	if c.mx == nil {
+		c.mx = &sync.Mutex{}
 	}
-	enc := gcm.Seal(nonce, nonce, pemBlk.Bytes, nil)
-	c.Salt = string(salt)
-	c.Nonce = string(nonce)
-	c.PrivateKey = string(enc)
+	c.mx.Lock()
+	defer c.mx.Unlock()
+
+	c.privateKeyBlock = Block{
+		Algorithm: c.Algorithm,
+		Data:      []byte(c.PrivateKey),
+	}
+	if c.IsUnsafe() {
+		// Private key does not need to be decrypted, load corresponding field directly.
+		err = c.loadRawPrivateKey([]byte(c.PrivateKey))
+	}
 	return
 }
 
 // DecryptPrivateKey decrypts the private key.
-func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error) {
+func (c *Certificate) DecryptPrivateKey(pass []byte) (err error) {
 	defer func() {
 		err = mapToCertError(err)
 	}()
 
 	if len(c.privateKeyBlock.Data) == 0 {
-		if c.IsUnsafe {
-			err = c.LoadUnsafePrivateKey()
-			return
-		} else {
-			err = c.LoadPrivateKey()
-		}
+		// Ensure that the private key is loaded.
+		err = c.LoadPrivateKey()
 		if err != nil {
 			return
 		}
@@ -387,7 +427,7 @@ func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error)
 	enc := c.privateKeyBlock.Data
 	salt := []byte(c.Salt)
 	nonce := []byte(c.Nonce)
-	derivedKey, _ := deriveKey([]byte(pass), salt)
+	derivedKey, _ := deriveKey(pass, salt)
 	blk, err := aes.NewCipher(derivedKey)
 	if err != nil {
 		return
@@ -397,18 +437,36 @@ func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error)
 		return
 	}
 
-	raw, err := gcm.Open(nil, nonce, []byte(enc[gcm.NonceSize():]), nil)
+	raw, err := gcm.Open(nil, nonce, enc[gcm.NonceSize():], nil)
 	if err != nil {
 		return
 	}
+	defer func() { raw = make([]byte, 0) }()
+
+	err = c.loadRawPrivateKey(raw)
+	return
+}
+
+// LoadCorrespondingPrivateKey loads the private key to their corresponding field.
+func (c *Certificate) LoadCorrespondingPrivateKey() (err error) {
+	return c.loadRawPrivateKey([]byte(c.PrivateKey))
+}
+
+// loadRawPrivateKey loads the corresponding private key field.
+// The caller must ensure to lock Certificate.mx.
+func (c *Certificate) loadRawPrivateKey(raw []byte) (err error) {
+	// Work with a copy of the raw key.
+	rawKey := make([]byte, len(raw))
+	_ = copy(rawKey, raw)
+	defer func() { rawKey = make([]byte, 0) }()
 
 	var (
 		key interface{}
 		ok  bool
 	)
-	switch algo {
+	switch c.Algorithm {
 	case Rsa:
-		key, err = x509.ParsePKCS8PrivateKey(raw)
+		key, err = x509.ParsePKCS8PrivateKey(rawKey)
 		if err != nil {
 			return
 		}
@@ -418,7 +476,7 @@ func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error)
 		}
 
 	case Ecdsa:
-		key, err = x509.ParseECPrivateKey(raw)
+		key, err = x509.ParseECPrivateKey(rawKey)
 		if err != nil {
 			return
 		}
@@ -428,7 +486,7 @@ func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error)
 		}
 
 	case Ed25591:
-		key, err = x509.ParsePKCS8PrivateKey(raw)
+		key, err = x509.ParsePKCS8PrivateKey(rawKey)
 		if err != nil {
 			return
 		}
@@ -442,79 +500,11 @@ func (c *Certificate) DecryptPrivateKey(pass string, algo Algorithm) (err error)
 	default:
 		return ErrNoSuchAlgorithm
 	}
-
 	return
 }
 
-// LoadPrivateKey loads the encrypted private key's Block type.
-// Get the encrypted key via *Certificate.GetEncryptedPrivateKey.
-func (c *Certificate) LoadPrivateKey() (err error) {
-	if c.mx == nil {
-		c.mx = &sync.Mutex{}
-	}
-	c.mx.Lock()
-	defer c.mx.Unlock()
-
-	c.privateKeyBlock = Block{
-		Algorithm: c.Algorithm,
-		Data:      c.PrivateKey,
-	}
-	return
-}
-
-// LoadUnsafePrivateKey loads the unsafe private key.
-func (c *Certificate) LoadUnsafePrivateKey() (err error) {
-	if c.mx == nil {
-		c.mx = &sync.Mutex{}
-	}
-	c.mx.Lock()
-	defer c.mx.Unlock()
-
-	var (
-		key interface{}
-		ok  bool
-	)
-	switch c.Algorithm {
-	case Rsa:
-		key, err = x509.ParsePKCS8PrivateKey([]byte(c.PrivateKey))
-		if err != nil {
-			return
-		}
-		c.rsa, ok = key.(*rsa.PrivateKey)
-		if !ok {
-			return errors.New("unable to cast rsa private key")
-		}
-
-	case Ecdsa:
-		key, err = x509.ParseECPrivateKey([]byte(c.PrivateKey))
-		if err != nil {
-			return
-		}
-		c.ecdsa, ok = key.(*ecdsa.PrivateKey)
-		if !ok {
-			return errors.New("unable to cast ecdsa private key")
-		}
-
-	case Ed25591:
-		key, err = x509.ParsePKCS8PrivateKey([]byte(c.PrivateKey))
-		if err != nil {
-			return
-		}
-		var k ed25519.PrivateKey
-		k, ok = key.(ed25519.PrivateKey)
-		if !ok {
-			return errors.New("unable to cast rsa private key")
-		}
-		c.ed25519 = &k
-
-	default:
-		return ErrNoSuchAlgorithm
-	}
-	return
-}
-
-// PrivateKeyBlock converts the private key into a *pem.Block.
-func (c *Certificate) PrivateKeyBlock() (blk *pem.Block, err error) {
+// PrivateKeyBlock returns the private key as a pem.Block.
+func (c *Certificate) PrivateKeyBlock() (blk pem.Block, err error) {
 	var (
 		keyType string
 		b       []byte
@@ -533,15 +523,62 @@ func (c *Certificate) PrivateKeyBlock() (blk *pem.Block, err error) {
 		b, err = x509.MarshalPKCS8PrivateKey(*c.Ed25519())
 
 	default:
-		return nil, ErrNoSuchAlgorithm
+		err = ErrNoSuchAlgorithm
+		return
 	}
 	if err != nil {
 		return
 	}
-	return &pem.Block{
+	return pem.Block{
 		Type:  keyType,
 		Bytes: b,
 	}, nil
+}
+
+// Release releases private key data.
+// After calling, the private key needs to be loaded / decrypted again.
+func (c *Certificate) Release() {
+	c.release()
+}
+
+// EnableAutoRelease raises Certificate.Release automatically after
+// calling Certificate.EncryptPrivateKey or Certificate.SetUnsafePrivateKey.
+func (c *Certificate) EnableAutoRelease() *Certificate {
+	c.releasable = true
+	return c
+}
+
+func (c *Certificate) autoRelease() {
+	if c.releasable {
+		c.release()
+	}
+}
+
+// release releases data stored inside the unexported private key fields.
+func (c *Certificate) release() {
+	c.mx.Lock()
+	defer c.mx.Unlock()
+
+	if c.rsa != nil {
+		*c.rsa = rsa.PrivateKey{}
+		c.rsa = nil
+	}
+	if c.ecdsa != nil {
+		*c.ecdsa = ecdsa.PrivateKey{}
+		c.ecdsa = nil
+	}
+	if c.ed25519 != nil {
+		*c.ed25519 = ed25519.PrivateKey{}
+		c.ed25519 = nil
+	}
+	for i := range c.privateKeyBlock.Data {
+		c.privateKeyBlock.Data[i] = 0
+	}
+	c.privateKeyBlock.Data = nil
+}
+
+func (c *Certificate) IsUnsafe() bool {
+	return len(c.Salt) == 0 && len(c.Nonce) == 0
 }
 
 // Renew renews the Certificate with the provided options.
@@ -587,10 +624,6 @@ func (c *Certificate) CopyPropertiesTo(dst *Certificate, copyUnexported bool) {
 
 func (c *Certificate) ParseX509() (crt *x509.Certificate, err error) {
 	return x509.ParseCertificate([]byte(c.PublicKey))
-}
-
-func ParseX509(b []byte) (crt *x509.Certificate, err error) {
-	return x509.ParseCertificate(b)
 }
 
 // ValidateTemplate validates the certificate's template via RFC5280.
@@ -642,6 +675,10 @@ func (c *Certificate) ValidateTemplate() (err error) {
 		return fmt.Errorf("%v: %s", err, "locality name length")
 	}
 	return
+}
+
+func ParseX509(b []byte) (crt *x509.Certificate, err error) {
+	return x509.ParseCertificate(b)
 }
 
 func ParseCertificateOptions(crt *x509.Certificate) (opts *Options, err error) {
