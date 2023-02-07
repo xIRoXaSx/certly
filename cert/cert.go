@@ -47,9 +47,9 @@ type Certificate struct {
 	// Name is the user specified name for this certificate.
 	Name string
 	// PublicKey is the public certificate in DER format.
-	PublicKey string
-	// PrivateKey is the raw encrypted private key.
-	PrivateKey string
+	PublicKey []byte
+	// PrivateKey is the private key of this Certificate and may be encrypted.
+	PrivateKey []byte
 	// Algorithm is the used private key algorithm.
 	Algorithm Algorithm
 	// SignerID is the ID of the signing Certificate.
@@ -57,8 +57,8 @@ type Certificate struct {
 	// IsCA indicates whether the certificate is a certificate authority or not.
 	IsCA            bool
 	Iterations      uint
-	Nonce           string
-	Salt            string
+	Nonce           []byte
+	Salt            []byte
 	releasable      bool
 	isSigned        bool
 	privateKeyBlock Block
@@ -278,7 +278,7 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	certs := []*Certificate{c, sc}
 	for _, cert := range certs {
 		if cert.template == nil {
-			cert.template, err = x509.ParseCertificate([]byte(cert.PublicKey))
+			cert.template, err = x509.ParseCertificate(cert.PublicKey)
 			if err != nil {
 				return err
 			}
@@ -286,7 +286,7 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	}
 
 	if sc.rsa == nil && sc.ecdsa == nil && sc.ed25519 == nil {
-		err = sc.loadRawPrivateKey([]byte(sc.PrivateKey))
+		err = sc.loadRawPrivateKey(sc.PrivateKey)
 		if err != nil {
 			return
 		}
@@ -310,7 +310,7 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	priv = nil
 
 	c.isSigned = true
-	c.PublicKey = string(der)
+	c.PublicKey = der
 	c.SignerID = sc.ID
 	return
 }
@@ -335,7 +335,7 @@ func (c *Certificate) SetUnsafePrivateKey() (err error) {
 	if err != nil {
 		return
 	}
-	c.PrivateKey = string(pb.Bytes)
+	c.PrivateKey = pb.Bytes
 	return
 }
 
@@ -367,9 +367,9 @@ func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
 		return
 	}
 	enc := gcm.Seal(nonce, nonce, pb.Bytes, nil)
-	c.Salt = string(salt)
-	c.Nonce = string(nonce)
-	c.PrivateKey = string(enc)
+	c.Salt = salt
+	c.Nonce = nonce
+	c.PrivateKey = enc
 	return
 }
 
@@ -398,11 +398,11 @@ func (c *Certificate) LoadPrivateKey() (err error) {
 
 	c.privateKeyBlock = Block{
 		Algorithm: c.Algorithm,
-		Data:      []byte(c.PrivateKey),
+		Data:      c.PrivateKey,
 	}
 	if c.IsUnsafe() {
 		// Private key does not need to be decrypted, load corresponding field directly.
-		err = c.loadRawPrivateKey([]byte(c.PrivateKey))
+		err = c.loadRawPrivateKey(c.PrivateKey)
 	}
 	return
 }
@@ -425,8 +425,8 @@ func (c *Certificate) DecryptPrivateKey(pass []byte) (err error) {
 	defer c.mx.Unlock()
 
 	enc := c.privateKeyBlock.Data
-	salt := []byte(c.Salt)
-	nonce := []byte(c.Nonce)
+	salt := c.Salt
+	nonce := c.Nonce
 	derivedKey, _ := deriveKey(pass, salt)
 	blk, err := aes.NewCipher(derivedKey)
 	if err != nil {
@@ -449,7 +449,7 @@ func (c *Certificate) DecryptPrivateKey(pass []byte) (err error) {
 
 // LoadCorrespondingPrivateKey loads the private key to their corresponding field.
 func (c *Certificate) LoadCorrespondingPrivateKey() (err error) {
-	return c.loadRawPrivateKey([]byte(c.PrivateKey))
+	return c.loadRawPrivateKey(c.PrivateKey)
 }
 
 // loadRawPrivateKey loads the corresponding private key field.
@@ -623,7 +623,7 @@ func (c *Certificate) CopyPropertiesTo(dst *Certificate, copyUnexported bool) {
 }
 
 func (c *Certificate) ParseX509() (crt *x509.Certificate, err error) {
-	return x509.ParseCertificate([]byte(c.PublicKey))
+	return x509.ParseCertificate(c.PublicKey)
 }
 
 // ValidateTemplate validates the certificate's template via RFC5280.

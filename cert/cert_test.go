@@ -84,7 +84,7 @@ func TestCertificate(t *testing.T) {
 	r.Error(t, c.SignSelf())
 
 	// Test x509 fields.
-	xCert, err := x509.ParseCertificate([]byte(c.PublicKey))
+	xCert, err := x509.ParseCertificate(c.PublicKey)
 	r.NoError(t, err)
 	parsedOpts, err := ParseCertificateOptions(xCert)
 	r.NoError(t, err)
@@ -99,7 +99,7 @@ func TestCertificate(t *testing.T) {
 	r.False(t, c.IsUnsafe())
 	r.NoError(t, c.LoadPrivateKey())
 	c.rsa = nil
-	c.PrivateKey = ""
+	c.PrivateKey = nil
 	r.NoError(t, c.DecryptPrivateKey(testPass))
 	r.False(t, c.IsUnsafe())
 	r.Exactly(t, pk, c.rsa)
@@ -123,7 +123,7 @@ func TestCertificate(t *testing.T) {
 	c = newRsaCert()
 	r.NoError(t, c.SignWith(ca))
 	r.True(t, c.isSigned)
-	xCert, err = x509.ParseCertificate([]byte(c.PublicKey))
+	xCert, err = x509.ParseCertificate(c.PublicKey)
 	r.NoError(t, err)
 	r.NotNil(t, xCert)
 	r.Exactly(t, xCert.Issuer.CommonName, caOpts.CommonName)
@@ -145,7 +145,7 @@ func TestCertificate(t *testing.T) {
 	opts.NotAfter = renewed.Add(24 * 365 * time.Hour)
 	rn, err := c.Renew(&opts, ca)
 	r.NoError(t, err)
-	xCert, err = x509.ParseCertificate([]byte(rn.PublicKey))
+	xCert, err = x509.ParseCertificate(rn.PublicKey)
 	r.NoError(t, err)
 	r.Exactly(t, xCert.Issuer.CommonName, caOpts.CommonName)
 	r.Greater(t, xCert.NotBefore, nbf)
@@ -263,7 +263,7 @@ func TestCertificate_Release(t *testing.T) {
 
 	// Check if field can be loaded again.
 	r.NoError(t, c.LoadPrivateKey())
-	r.Exactly(t, []byte(c.PrivateKey), c.privateKeyBlock.Data)
+	r.Exactly(t, c.PrivateKey, c.privateKeyBlock.Data)
 	r.NoError(t, c.DecryptPrivateKey(append(caPass, '!')))
 	pemBlk, err = c.getPrivateKeyPem()
 	r.NoError(t, err)
@@ -326,7 +326,7 @@ func TestCertificate_Release(t *testing.T) {
 		// Check if field can be loaded again.
 		r.NoError(t, c.LoadPrivateKey())
 		checkFilled(t, algo, c)
-		r.Exactly(t, c.privateKeyBlock.Data, []byte(c.PrivateKey))
+		r.Exactly(t, c.privateKeyBlock.Data, c.PrivateKey)
 
 		// With SignSelf.
 		c = newTestCert(tc, false)
@@ -338,7 +338,7 @@ func TestCertificate_Release(t *testing.T) {
 		// Check if field can be loaded again.
 		r.NoError(t, c.LoadPrivateKey())
 		checkFilled(t, algo, c)
-		r.Exactly(t, c.privateKeyBlock.Data, []byte(c.PrivateKey))
+		r.Exactly(t, c.privateKeyBlock.Data, c.PrivateKey)
 
 		c = newTestCert(tc, false)
 		r.NoError(t, c.SignWith(ca))
@@ -469,7 +469,7 @@ func TestCertificate_Rsa(t *testing.T) {
 	r.NoError(t, c.EncryptPrivateKey(testPass))
 	r.NoError(t, c.LoadPrivateKey())
 	r.Exactly(t, c.GetPrivateKey(), c.privateKeyBlock)
-	r.Exactly(t, c.GetPrivateKey().Data, []byte(c.PrivateKey))
+	r.Exactly(t, c.GetPrivateKey().Data, c.PrivateKey)
 
 	// Test private key decryption.
 	r.Error(t, c.DecryptPrivateKey(testPass[:len(testPass)-1]))
@@ -618,10 +618,10 @@ func TestCertificate_ParseX509(t *testing.T) {
 	r.True(t, c.isSigned)
 	xCert, err := c.ParseX509()
 	r.NoError(t, err)
-	xCert2, err := x509.ParseCertificate([]byte(c.PublicKey))
+	xCert2, err := x509.ParseCertificate(c.PublicKey)
 	r.NoError(t, err)
 	r.Exactly(t, xCert, xCert2)
-	xCert3, err := ParseX509([]byte(c.PublicKey))
+	xCert3, err := ParseX509(c.PublicKey)
 	r.NoError(t, err)
 	r.Exactly(t, xCert, xCert3)
 }
