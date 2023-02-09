@@ -2,6 +2,9 @@ package cert
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -231,6 +234,7 @@ func TestCertificate_Release(t *testing.T) {
 	caOpts.IsCA = true
 	caPass := []byte("SomeTestPassphrase")
 	keyType := "RSA.1024"
+	algo := strings.Split(keyType, ".")[0]
 	ca, err := New(&caOpts)
 	r.NoError(t, err)
 	r.NoError(t, ca.EnableAutoRelease().CreatePrivateKey(keyType))
@@ -251,14 +255,15 @@ func TestCertificate_Release(t *testing.T) {
 	r.Error(t, ca.DecryptPrivateKey(caPass[:len(caPass)-1]))
 	r.NoError(t, ca.DecryptPrivateKey(caPass))
 
-	// Check if certs can be signed after loading field.
 	c = newTestCert(keyType, true)
 	r.Error(t, c.SignWith(ca))
 	pemBlk, err := c.getPrivateKeyPem()
 	r.NoError(t, err)
-	priv := string(pemBlk.Bytes)
-	checkFilled(t, strings.Split(keyType, ".")[0], c)
-	r.NoError(t, c.EnableAutoRelease().EncryptPrivateKey(append(caPass, '!')))
+	priv := pemBlk.Bytes
+	checkFilled(t, algo, c)
+	r.NoError(t, c.EncryptPrivateKey(append(caPass, '!')))
+	checkFilled(t, algo, c)
+	c.Release()
 	checkAllEmpty(t, c)
 
 	// Check if field can be loaded again.
@@ -267,10 +272,11 @@ func TestCertificate_Release(t *testing.T) {
 	r.NoError(t, c.DecryptPrivateKey(append(caPass, '!')))
 	pemBlk, err = c.getPrivateKeyPem()
 	r.NoError(t, err)
-	r.Exactly(t, string(pemBlk.Bytes), priv)
-
-	defer checkAllEmpty(t, ca)
-	defer ca.Release()
+	r.Exactly(t, pemBlk.Bytes, priv)
+	defer func() {
+		ca.Release()
+		checkAllEmpty(t, ca)
+	}()
 
 	rsaKey := AlgorithmToString(Rsa)
 	ecdsaKey := AlgorithmToString(Ecdsa)
@@ -286,7 +292,7 @@ func TestCertificate_Release(t *testing.T) {
 		edKey,
 	}
 	for _, tc := range cases {
-		algo := strings.Split(tc, ".")[0]
+		algo = strings.Split(tc, ".")[0]
 
 		// Fields should be empty after releasing.
 		c = newTestCert(tc, true)
@@ -297,10 +303,12 @@ func TestCertificate_Release(t *testing.T) {
 
 		// Check if SignWith fails after releasing.
 		c = newTestCert(tc, false).EnableAutoRelease()
+		checkFilled(t, algo, c)
 		r.NoError(t, c.SetUnsafePrivateKey())
 		checkAllEmpty(t, c)
 		r.Error(t, c.SignWith(c))
 		r.NoError(t, c.LoadPrivateKey())
+		checkFilled(t, algo, c)
 		r.NoError(t, c.SignWith(c))
 		r.NoError(t, c.SetUnsafePrivateKey())
 		checkAllEmpty(t, c)
@@ -311,24 +319,27 @@ func TestCertificate_Release(t *testing.T) {
 		checkAllEmpty(t, c)
 		r.Error(t, c.SignSelf())
 		r.NoError(t, c.LoadPrivateKey())
+		checkFilled(t, algo, c)
 		r.NoError(t, c.SignSelf())
 		r.NoError(t, c.SetUnsafePrivateKey())
 		checkAllEmpty(t, c)
 
 		// New certs without EnableAutoRelease should keep private key values.
-		// With SignWith.
+		// Using SignWith.
 		c = newTestCert(tc, false)
 		checkFilled(t, algo, c)
 		r.NoError(t, c.SignWith(ca))
 		r.NoError(t, c.SetUnsafePrivateKey())
 		checkFilled(t, algo, c)
 
-		// Check if field can be loaded again.
+		// Check if field can be loaded anyway.
 		r.NoError(t, c.LoadPrivateKey())
 		checkFilled(t, algo, c)
 		r.Exactly(t, c.privateKeyBlock.Data, c.PrivateKey)
+		c.Release()
+		checkAllEmpty(t, c)
 
-		// With SignSelf.
+		// Using SignSelf.
 		c = newTestCert(tc, false)
 		checkFilled(t, algo, c)
 		r.NoError(t, c.SignSelf())
@@ -339,11 +350,14 @@ func TestCertificate_Release(t *testing.T) {
 		r.NoError(t, c.LoadPrivateKey())
 		checkFilled(t, algo, c)
 		r.Exactly(t, c.privateKeyBlock.Data, c.PrivateKey)
+		c.Release()
+		checkAllEmpty(t, c)
 
+		var xC *x509.Certificate
 		c = newTestCert(tc, false)
 		r.NoError(t, c.SignWith(ca))
 		c.EnableAutoRelease()
-		xC, err := c.ParseX509()
+		xC, err = c.ParseX509()
 		r.NoError(t, err)
 		r.Exactly(t, xCA.Issuer.SerialNumber, xC.Issuer.SerialNumber)
 		r.Exactly(t, xCA.Issuer.CommonName, xC.Issuer.CommonName)
@@ -483,9 +497,11 @@ func TestCertificate_Rsa(t *testing.T) {
 	r.NoError(t, c.EnableAutoRelease().CreateRsaPrivateKey(RSA1024))
 	r.Exactly(t, c.rsa, c.Rsa())
 	p := c.Rsa()
+	r.NotEqual(t, rsa.PrivateKey{}, *p)
 	r.NotNil(t, p)
 	r.NoError(t, c.SetUnsafePrivateKey())
 	r.Nil(t, c.Rsa())
+	r.Exactly(t, rsa.PrivateKey{}, *p)
 	pm, err := c.RsaToPem()
 	r.Error(t, err)
 	r.Nil(t, pm)
@@ -542,9 +558,11 @@ func TestCertificate_Ecdsa(t *testing.T) {
 	r.NoError(t, c.EnableAutoRelease().CreateEcdsaPrivateKey(P521))
 	r.Exactly(t, c.ecdsa, c.Ecdsa())
 	p := c.Ecdsa()
+	r.NotEqual(t, ecdsa.PrivateKey{}, *p)
 	r.NotNil(t, p)
 	r.NoError(t, c.SetUnsafePrivateKey())
 	r.Nil(t, c.Ecdsa())
+	r.Exactly(t, ecdsa.PrivateKey{}, *p)
 	pm, err := c.EcdsaToPem()
 	r.Error(t, err)
 	r.Nil(t, pm)
@@ -555,7 +573,6 @@ func TestCertificate_Ed25519(t *testing.T) {
 
 	// Test encryption and decryption.
 	testPass := []byte("This_Is_Just_A_Simple_Test_Value")
-	wrongPass := []byte("Wrong_Pass")
 	opts := defaultOpts()
 	var c *Certificate
 	var err error
@@ -589,7 +606,7 @@ func TestCertificate_Ed25519(t *testing.T) {
 	r.NoError(t, c.LoadPrivateKey())
 	r.Exactly(t, c.GetPrivateKey(), c.privateKeyBlock)
 	r.NoError(t, c.DecryptPrivateKey(testPass))
-	r.Error(t, c.DecryptPrivateKey(wrongPass))
+	r.Error(t, c.DecryptPrivateKey(testPass[:len(testPass)-1]))
 	blk, err := c.PrivateKeyBlock()
 	r.NoError(t, err)
 	r.NotEmpty(t, blk.Bytes)
@@ -599,9 +616,11 @@ func TestCertificate_Ed25519(t *testing.T) {
 	r.NoError(t, c.EnableAutoRelease().CreateEd25519PrivateKey())
 	r.Exactly(t, c.ed25519, c.Ed25519())
 	p := c.Ed25519()
+	r.NotEqual(t, ed25519.PrivateKey{}, *p)
 	r.NotNil(t, p)
 	r.NoError(t, c.SetUnsafePrivateKey())
 	r.Nil(t, c.Ed25519())
+	r.Exactly(t, ed25519.PrivateKey{}, *p)
 	pm, err = c.Ed25519ToPem()
 	r.Error(t, err)
 	r.Nil(t, pm)

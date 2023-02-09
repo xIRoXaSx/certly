@@ -307,7 +307,6 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	if err != nil {
 		return
 	}
-	priv = nil
 
 	c.isSigned = true
 	c.PublicKey = der
@@ -317,6 +316,7 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 
 // GetPrivateKey gets the private key.
 // The returned Block contains any of the available private key forms (rsa, ...).
+// Note that the private key might be encrypted.
 func (c *Certificate) GetPrivateKey() Block {
 	return c.privateKeyBlock
 }
@@ -341,14 +341,34 @@ func (c *Certificate) SetUnsafePrivateKey() (err error) {
 
 // EncryptPrivateKey encrypts the private key with the given pass.
 func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
+	var (
+		key  []byte
+		salt []byte
+		enc  []byte
+		blk  cipher.Block
+		pb   pem.Block
+	)
+	defer func() {
+		// Zero values.
+		b := [][]byte{key, salt, enc}
+		for i := range b {
+			for j := range b[i] {
+				b[i][j] = 0
+			}
+			b[i] = nil
+		}
+		blk = nil
+		pb = pem.Block{}
+	}()
+
 	c.mx.Lock()
 	defer func() {
 		c.mx.Unlock()
 		c.autoRelease()
 	}()
 
-	key, salt := deriveKey(pass, nil)
-	blk, err := aes.NewCipher(key)
+	key, salt = deriveKey(pass, nil)
+	blk, err = aes.NewCipher(key)
 	if err != nil {
 		return
 	}
@@ -362,14 +382,18 @@ func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
 		return
 	}
 
-	pb, err := c.getPrivateKeyPem()
+	pb, err = c.getPrivateKeyPem()
 	if err != nil {
 		return
 	}
-	enc := gcm.Seal(nonce, nonce, pb.Bytes, nil)
-	c.Salt = salt
-	c.Nonce = nonce
-	c.PrivateKey = enc
+	enc = gcm.Seal(nonce, nonce, pb.Bytes, nil)
+
+	c.Salt = make([]byte, len(salt))
+	c.Nonce = make([]byte, len(nonce))
+	c.PrivateKey = make([]byte, len(enc))
+	copy(c.Salt, salt)
+	copy(c.Nonce, nonce)
+	copy(c.PrivateKey, enc)
 	return
 }
 
@@ -386,7 +410,7 @@ func (c *Certificate) getPrivateKeyPem() (pb pem.Block, err error) {
 	return
 }
 
-// LoadPrivateKey loads the private key's Block type.
+// LoadPrivateKey loads the private key.
 // Note that the private key might be encrypted.
 // Get the key via *Certificate.GetPrivateKey or *Certificate.PrivateKey.
 func (c *Certificate) LoadPrivateKey() (err error) {
@@ -424,46 +448,64 @@ func (c *Certificate) DecryptPrivateKey(pass []byte) (err error) {
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
+	var (
+		derivedKey []byte
+		raw        []byte
+		gcm        cipher.AEAD
+		blk        cipher.Block
+	)
+	defer func() {
+		// Zero values.
+		b := [][]byte{derivedKey, raw}
+		for i := range b {
+			for j := range b[i] {
+				b[i][j] = 0
+			}
+			b[i] = nil
+		}
+		gcm = nil
+		blk = nil
+	}()
+
 	enc := c.privateKeyBlock.Data
 	salt := c.Salt
 	nonce := c.Nonce
-	derivedKey, _ := deriveKey(pass, salt)
-	blk, err := aes.NewCipher(derivedKey)
+	derivedKey, _ = deriveKey(pass, salt)
+	blk, err = aes.NewCipher(derivedKey)
 	if err != nil {
 		return
 	}
-	gcm, err := cipher.NewGCM(blk)
+	gcm, err = cipher.NewGCM(blk)
 	if err != nil {
 		return
 	}
 
-	raw, err := gcm.Open(nil, nonce, enc[gcm.NonceSize():], nil)
+	raw, err = gcm.Open(nil, nonce, enc[gcm.NonceSize():], nil)
 	if err != nil {
 		return
 	}
-	defer func() { raw = make([]byte, 0) }()
-
 	err = c.loadRawPrivateKey(raw)
 	return
-}
-
-// LoadCorrespondingPrivateKey loads the private key to their corresponding field.
-func (c *Certificate) LoadCorrespondingPrivateKey() (err error) {
-	return c.loadRawPrivateKey(c.PrivateKey)
 }
 
 // loadRawPrivateKey loads the corresponding private key field.
 // The caller must ensure to lock Certificate.mx.
 func (c *Certificate) loadRawPrivateKey(raw []byte) (err error) {
+	var key interface{}
+
 	// Work with a copy of the raw key.
 	rawKey := make([]byte, len(raw))
 	_ = copy(rawKey, raw)
-	defer func() { rawKey = make([]byte, 0) }()
+	defer func() {
+		// Zero values.
+		for i := range rawKey {
+			rawKey[i] = 0
+		}
+		rawKey = nil
+		key = nil
+	}()
 
-	var (
-		key interface{}
-		ok  bool
-	)
+	var ok bool
 	switch c.Algorithm {
 	case Rsa:
 		key, err = x509.ParsePKCS8PrivateKey(rawKey)
@@ -505,22 +547,20 @@ func (c *Certificate) loadRawPrivateKey(raw []byte) (err error) {
 
 // PrivateKeyBlock returns the private key as a pem.Block.
 func (c *Certificate) PrivateKeyBlock() (blk pem.Block, err error) {
-	var (
-		keyType string
-		b       []byte
-	)
+	var keyType string
+
 	switch c.Algorithm {
 	case Rsa:
 		keyType = RsaPrivateKeyKey
-		b, err = x509.MarshalPKCS8PrivateKey(c.Rsa())
+		blk.Bytes, err = x509.MarshalPKCS8PrivateKey(c.Rsa())
 
 	case Ecdsa:
 		keyType = EcPrivateKeyKey
-		b, err = x509.MarshalECPrivateKey(c.Ecdsa())
+		blk.Bytes, err = x509.MarshalECPrivateKey(c.Ecdsa())
 
 	case Ed25591:
 		keyType = PrivateKeyKey
-		b, err = x509.MarshalPKCS8PrivateKey(*c.Ed25519())
+		blk.Bytes, err = x509.MarshalPKCS8PrivateKey(*c.Ed25519())
 
 	default:
 		err = ErrNoSuchAlgorithm
@@ -529,10 +569,8 @@ func (c *Certificate) PrivateKeyBlock() (blk pem.Block, err error) {
 	if err != nil {
 		return
 	}
-	return pem.Block{
-		Type:  keyType,
-		Bytes: b,
-	}, nil
+	blk.Type = keyType
+	return
 }
 
 // Release releases private key data.
