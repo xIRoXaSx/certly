@@ -7,7 +7,7 @@ import (
 var (
 	ErrNoSuchAlgorithm       = errors.New("no such algorithm implemented")
 	ErrCipherMsgAuthFailed   = errors.New("message authentication failed")
-	errCertCannotBeNil       = errors.New("certificate to sign cannot be nil")
+	errCertToSignCannotBeNil = errors.New("certificate to sign cannot be nil")
 	errSignerCannotBeNil     = errors.New("signer cannot be nil")
 	errPrivateKeyCannotBeNil = errors.New("private key cannot be nil")
 )
