@@ -246,7 +246,7 @@ func (c *Certificate) SignWith(sc *Certificate) (err error) {
 
 func (c *Certificate) sign(sc *Certificate) (err error) {
 	if c == nil {
-		return errCertCannotBeNil
+		return errCertToSignCannotBeNil
 	}
 	if sc == nil {
 		return errSignerCannotBeNil
@@ -361,6 +361,7 @@ func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
 		pb = pem.Block{}
 	}()
 
+	c.ensureMxInit()
 	c.mx.Lock()
 	defer func() {
 		c.mx.Unlock()
@@ -414,9 +415,7 @@ func (c *Certificate) getPrivateKeyPem() (pb pem.Block, err error) {
 // Note that the private key might be encrypted.
 // Get the key via *Certificate.GetPrivateKey or *Certificate.PrivateKey.
 func (c *Certificate) LoadPrivateKey() (err error) {
-	if c.mx == nil {
-		c.mx = &sync.Mutex{}
-	}
+	c.ensureMxInit()
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
@@ -548,7 +547,6 @@ func (c *Certificate) loadRawPrivateKey(raw []byte) (err error) {
 // PrivateKeyBlock returns the private key as a pem.Block.
 func (c *Certificate) PrivateKeyBlock() (blk pem.Block, err error) {
 	var keyType string
-
 	switch c.Algorithm {
 	case Rsa:
 		keyType = RsaPrivateKeyKey
@@ -582,6 +580,10 @@ func (c *Certificate) Release() {
 // EnableAutoRelease raises Certificate.Release automatically after
 // calling Certificate.EncryptPrivateKey or Certificate.SetUnsafePrivateKey.
 func (c *Certificate) EnableAutoRelease() *Certificate {
+	c.ensureMxInit()
+	c.mx.Lock()
+	defer c.mx.Unlock()
+
 	c.releasable = true
 	return c
 }
@@ -646,6 +648,10 @@ func (c *Certificate) Renew(opts *Options, sc *Certificate) (renewed *Certificat
 }
 
 func (c *Certificate) CopyPropertiesTo(dst *Certificate, copyUnexported bool) {
+	dst.ensureMxInit()
+	dst.mx.Lock()
+	defer dst.mx.Unlock()
+
 	dst.ID = c.ID
 	dst.Name = c.Name
 	dst.Algorithm = c.Algorithm
@@ -667,6 +673,10 @@ func (c *Certificate) ParseX509() (crt *x509.Certificate, err error) {
 // ValidateTemplate validates the certificate's template via RFC5280.
 // Source: https://www.ietf.org/rfc/rfc5280.txt.
 func (c *Certificate) ValidateTemplate() (err error) {
+	if c.template == nil {
+		return errors.New("unable to validate, certificate template was empty")
+	}
+
 	// Time validation.
 	err = ValidateTime(c.template.NotBefore)
 	if err != nil {
@@ -748,4 +758,11 @@ func deriveKey(phrase []byte, salt []byte) (key, s []byte) {
 		}
 	}
 	return pbkdf2.Key(phrase, salt, 4096, 32, sha256.New), salt
+}
+
+func (c *Certificate) ensureMxInit() *Certificate {
+	if c.mx == nil {
+		c.mx = &sync.Mutex{}
+	}
+	return c
 }
