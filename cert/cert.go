@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/xiroxasx/certly/cert/assertion"
+	"golang.org/x/crypto/openpgp/packet"
 	"golang.org/x/crypto/pbkdf2"
 )
 
@@ -62,6 +63,7 @@ type Certificate struct {
 	releasable      bool
 	isSigned        bool
 	privateKeyBlock Block
+	pgp             *packet.PrivateKey
 	ecdsa           *ecdsa.PrivateKey
 	rsa             *rsa.PrivateKey
 	ed25519         *ed25519.PrivateKey
@@ -93,6 +95,7 @@ const (
 	Rsa
 	Ecdsa
 	Ed25591
+	Pgp
 )
 
 func AlgorithmToString(a Algorithm) string {
@@ -105,6 +108,9 @@ func AlgorithmToString(a Algorithm) string {
 
 	case Ed25591:
 		return "ED25591"
+
+	case Pgp:
+		return "PGP"
 
 	default:
 		return "None"
@@ -537,6 +543,18 @@ func (c *Certificate) loadRawPrivateKey(raw []byte) (err error) {
 			return errors.New("unable to cast ed25519 private key")
 		}
 		c.ed25519 = &k
+
+	//case Pgp:
+	//	key, err = openpgp.ReadEntity(rawKey)
+	//	if err != nil {
+	//		return
+	//	}
+	//	var k packet.PrivateKey
+	//	k, ok = key.(packet.PrivateKey)
+	//	if !ok {
+	//		return errors.New("unable to cast ed25519 private key")
+	//	}
+	//	c.ed25519 = &k
 
 	default:
 		return ErrNoSuchAlgorithm
