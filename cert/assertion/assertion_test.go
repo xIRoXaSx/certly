@@ -1,6 +1,7 @@
 package assertion
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -22,6 +23,14 @@ func TestAssertTimeNotZero(t *testing.T) {
 
 	r.NoError(t, AssertTimeNotZero(time.Now()))
 	r.Error(t, AssertTimeNotZero(time.Time{}))
+}
+
+func TestAssertTimeNotNegative(t *testing.T) {
+	t.Parallel()
+
+	r.NoError(t, AssertTimeNotNegative(time.Now()))
+	r.NoError(t, AssertTimeNotNegative(time.Time{}))
+	r.Error(t, AssertTimeNotNegative(time.Time{}.Add(-math.MaxInt64)))
 }
 
 func TestAssertWithinRange(t *testing.T) {

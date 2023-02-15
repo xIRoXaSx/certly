@@ -25,3 +25,10 @@ func AssertTimeNotZero(t time.Time) (err error) {
 	}
 	return fmt.Errorf("assertion: time was of zero value")
 }
+
+func AssertTimeNotNegative(t time.Time) (err error) {
+	if (t.UnixMilli() - time.Time{}.UnixMilli()) >= 0 {
+		return
+	}
+	return fmt.Errorf("assertion: time was negative")
+}

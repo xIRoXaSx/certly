@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -31,8 +32,12 @@ const (
 	RsaPrivateKeyKey = "RSA PRIVATE KEY"
 
 	// MaxSANLen is not an actual RFC5280 constraint, 4096 should suffice.
-	MaxSANLen                    = 4096
-	MaxDomainSliceLen            = 20
+	MaxSANLen         = 4096
+	MaxDomainSliceLen = 20
+	// MaxIPSliceLen is not an actual RFC5280 constraint, 20 should suffice.
+	MaxIPSliceLen = 20
+	// MaxIPLen can contain either an IPv4 or IPv6 address.
+	MaxIPLen                     = 39
 	RFC5280SerialNumberLen       = 64
 	RFC5280CommonNameLen         = 64
 	RFC5280CountryLen            = 2
@@ -77,6 +82,7 @@ type Options struct {
 	State              string   `json:"State"`
 	Locality           string   `json:"Locality"`
 	DNSNames           []string `json:"DNSNames"`
+	IPAddresses        []string `json:"IPAddresses"`
 	IsCA               bool     `json:"IsCA"`
 	Expiration
 }
@@ -157,6 +163,17 @@ func newCert(opts *Options) (c *Certificate, err error) {
 	if err != nil {
 		return
 	}
+
+	ips := make([]net.IP, len(opts.IPAddresses))
+	for i, addr := range opts.IPAddresses {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			err = fmt.Errorf("unable to parse ip address: %s", addr)
+			return
+		}
+		ips[i] = ip
+	}
+
 	cn := opts.CommonName
 	c = &Certificate{
 		IsCA: opts.IsCA,
@@ -164,6 +181,7 @@ func newCert(opts *Options) (c *Certificate, err error) {
 		template: &x509.Certificate{
 			SerialNumber:          serial,
 			DNSNames:              opts.DNSNames,
+			IPAddresses:           ips,
 			KeyUsage:              usage,
 			ExtKeyUsage:           extUsage,
 			BasicConstraintsValid: true,
@@ -693,6 +711,10 @@ func (c *Certificate) ValidateTemplate() (err error) {
 		return fmt.Errorf("%v: %s", err, "serial number")
 	}
 	err = ValidateSubjectAltName(c.template.DNSNames)
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, "subject alternative name slice size")
+	}
+	err = ValidateIPAddress(c.template.IPAddresses)
 	if err != nil {
 		return fmt.Errorf("%v: %s", err, "subject alternative name slice size")
 	}
