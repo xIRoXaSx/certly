@@ -712,11 +712,11 @@ func (c *Certificate) ValidateTemplate() (err error) {
 	}
 	err = ValidateSubjectAltName(c.template.DNSNames)
 	if err != nil {
-		return fmt.Errorf("%v: %s", err, "subject alternative name slice size")
+		return fmt.Errorf("%v: %s", err, "subject alternative name size")
 	}
 	err = ValidateIPAddress(c.template.IPAddresses)
 	if err != nil {
-		return fmt.Errorf("%v: %s", err, "subject alternative name slice size")
+		return fmt.Errorf("%v: %s", err, "ip address size")
 	}
 
 	// Subject validation.

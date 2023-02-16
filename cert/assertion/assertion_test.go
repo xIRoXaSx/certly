@@ -43,3 +43,13 @@ func TestAssertWithinRange(t *testing.T) {
 	r.Error(t, AssertWithinRange(-1, 1, 1))
 	r.Error(t, AssertWithinRange(-1, 0, 1))
 }
+
+func TestAssertGreaterThan(t *testing.T) {
+	t.Parallel()
+
+	r.NoError(t, AssertGreaterThan(2, 1))
+	r.Error(t, AssertGreaterThan(1, 1))
+	r.Error(t, AssertGreaterThan(0, 1))
+	r.Error(t, AssertGreaterThan(-1, 1))
+	r.Error(t, AssertGreaterThan(-1, 0))
+}

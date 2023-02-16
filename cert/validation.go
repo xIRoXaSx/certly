@@ -14,8 +14,7 @@ func ValidateTime(t time.Time) (err error) {
 	if err != nil {
 		return
 	}
-	err = assertion.AssertTimeNotNegative(t)
-	return
+	return assertion.AssertTimeNotNegative(t)
 }
 
 func ValidateSerialNumber(sn *big.Int) error {
@@ -27,7 +26,17 @@ func ValidateSubjectAltName(san []string) (err error) {
 	if err != nil {
 		return
 	}
-	return assertion.AssertWithinRange(len(strings.Join(san, "")), 0, MaxSANLen)
+
+	var sanLen int
+	for _, s := range san {
+		sLen := len(strings.TrimSpace(s))
+		err = assertion.AssertGreaterThan(sLen, 0)
+		if err != nil {
+			return err
+		}
+		sanLen += sLen
+	}
+	return assertion.AssertWithinRange(sanLen, 0, MaxSANLen)
 }
 
 func ValidateIPAddress(ip []net.IP) (err error) {

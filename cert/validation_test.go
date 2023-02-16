@@ -38,6 +38,8 @@ func TestValidateSubjectAltName(t *testing.T) {
 
 	san := "test.local"
 	r.NoError(t, ValidateSubjectAltName([]string{san}))
+	r.Error(t, ValidateSubjectAltName([]string{""}))
+	r.Error(t, ValidateSubjectAltName([]string{"   "}))
 
 	sans := make([]string, MaxDomainSliceLen)
 	for i := range sans {
@@ -49,6 +51,8 @@ func TestValidateSubjectAltName(t *testing.T) {
 	r.Error(t, ValidateSubjectAltName(sans))
 
 	// Test MaxSANLen.
+	r.NoError(t, ValidateSubjectAltName([]string{strings.Repeat("a", int(math.Ceil(MaxSANLen)))}))
+	r.Error(t, ValidateSubjectAltName([]string{strings.Repeat("a", int(math.Ceil(MaxSANLen))+1)}))
 	for i := range sans {
 		sans[i] = strings.Repeat("a", int(math.Ceil(MaxSANLen/20))+1)
 	}
@@ -77,6 +81,8 @@ func TestValidateIPAddress(t *testing.T) {
 }
 
 func TestValidateCommonName(t *testing.T) {
+	t.Parallel()
+
 	r.NoError(t, ValidateCommonName("test"))
 	r.NoError(t, ValidateCommonName("t"))
 	r.Error(t, ValidateCommonName(""))
@@ -85,6 +91,8 @@ func TestValidateCommonName(t *testing.T) {
 }
 
 func TestValidateOrganization(t *testing.T) {
+	t.Parallel()
+
 	r.NoError(t, ValidateOrganization("test"))
 	r.NoError(t, ValidateOrganization("t"))
 	r.Error(t, ValidateOrganization(""))
@@ -93,6 +101,8 @@ func TestValidateOrganization(t *testing.T) {
 }
 
 func TestValidateOrganizationalUnit(t *testing.T) {
+	t.Parallel()
+
 	r.NoError(t, ValidateOrganizationalUnit("test"))
 	r.NoError(t, ValidateOrganizationalUnit("t"))
 	r.Error(t, ValidateOrganizationalUnit(""))
@@ -101,6 +111,8 @@ func TestValidateOrganizationalUnit(t *testing.T) {
 }
 
 func TestValidateCountry(t *testing.T) {
+	t.Parallel()
+
 	r.NoError(t, ValidateCountry(strings.Repeat("a", RFC5280CountryLen)))
 	r.Error(t, ValidateCountry("t"))
 	r.Error(t, ValidateCountry(""))
@@ -108,6 +120,8 @@ func TestValidateCountry(t *testing.T) {
 }
 
 func TestValidateState(t *testing.T) {
+	t.Parallel()
+
 	r.NoError(t, ValidateState("test"))
 	r.NoError(t, ValidateState("t"))
 	r.Error(t, ValidateState(""))
@@ -116,6 +130,8 @@ func TestValidateState(t *testing.T) {
 }
 
 func TestValidateLocality(t *testing.T) {
+	t.Parallel()
+
 	r.NoError(t, ValidateLocality("test"))
 	r.NoError(t, ValidateLocality("t"))
 	r.Error(t, ValidateLocality(""))
