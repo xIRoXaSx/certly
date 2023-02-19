@@ -2,14 +2,19 @@ package cert
 
 import (
 	"math/big"
+	"net"
 	"strings"
 	"time"
 
 	"github.com/xiroxasx/certly/cert/assertion"
 )
 
-func ValidateTime(t time.Time) error {
-	return assertion.AssertTimeNotZero(t)
+func ValidateTime(t time.Time) (err error) {
+	err = assertion.AssertTimeNotZero(t)
+	if err != nil {
+		return
+	}
+	return assertion.AssertTimeNotNegative(t)
 }
 
 func ValidateSerialNumber(sn *big.Int) error {
@@ -21,7 +26,32 @@ func ValidateSubjectAltName(san []string) (err error) {
 	if err != nil {
 		return
 	}
-	return assertion.AssertWithinRange(len(strings.Join(san, "")), 0, MaxSANLen)
+
+	var sanLen int
+	for _, s := range san {
+		sLen := len(strings.TrimSpace(s))
+		err = assertion.AssertGreaterThan(sLen, 0)
+		if err != nil {
+			return err
+		}
+		sanLen += sLen
+	}
+	return assertion.AssertWithinRange(sanLen, 0, MaxSANLen)
+}
+
+func ValidateIPAddress(ip []net.IP) (err error) {
+	err = assertion.AssertWithinRange(len(ip), 0, MaxIPSliceLen)
+	if err != nil {
+		return
+	}
+
+	for _, addr := range ip {
+		err = assertion.AssertWithinRange(len(addr), 7, MaxIPLen)
+		if err != nil {
+			return
+		}
+	}
+	return
 }
 
 func ValidateCommonName(cn string) error {

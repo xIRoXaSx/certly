@@ -167,6 +167,20 @@ func TestCertificate(t *testing.T) {
 	r.NoError(t, c.CreateEcdsaPrivateKey(P256))
 	r.NoError(t, c.SignSelf())
 	c.Algorithm = math.MaxUint
+
+	// Test with IP addresses.
+	opts = defaultOpts()
+	opts.IPAddresses = []string{"10.10.10.10"}
+	c, err = New(&opts)
+	r.NoError(t, err)
+
+	opts.IPAddresses = []string{""}
+	c, err = New(&opts)
+	r.Error(t, err)
+
+	opts.IPAddresses = []string{"10.10.10"}
+	c, err = New(&opts)
+	r.Error(t, err)
 }
 
 func TestNewWithIdentifier(t *testing.T) {
