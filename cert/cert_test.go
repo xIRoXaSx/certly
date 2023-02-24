@@ -15,6 +15,7 @@ import (
 	"time"
 
 	r "github.com/stretchr/testify/require"
+	"golang.org/x/crypto/openpgp/packet"
 )
 
 func defaultOpts() Options {
@@ -638,6 +639,52 @@ func TestCertificate_Ed25519(t *testing.T) {
 	pm, err = c.Ed25519ToPem()
 	r.Error(t, err)
 	r.Nil(t, pm)
+}
+
+func TestCertificate_CreatePgpPrivateKey(t *testing.T) {
+	t.Parallel()
+
+	// Test encryption and decryption.
+	testPass := []byte("This_Is_Just_A_Simple_Test_Value")
+	opts := defaultOpts()
+	var (
+		c   *Certificate
+		err error
+	)
+	c, err = New(&opts)
+	r.NoError(t, err)
+	r.NoError(t, c.CreatePgpPrivateKey(RSA2048))
+
+	r.NotNil(t, c.Pgp())
+	r.NotNil(t, c.pgp)
+	r.Exactly(t, c.pgp, c.Pgp())
+	pm, err := c.PgpToPem()
+	r.NoError(t, err)
+	r.NotNil(t, pm)
+	pub := c.PgpPublicCryptoKey()
+	r.NotNil(t, pub)
+	pubKey := c.PgpPublicKey()
+	r.NoError(t, err)
+	r.NotNil(t, pubKey)
+	r.NoError(t, c.SetUnsafePrivateKey())
+	r.Exactly(t, AlgorithmToString(c.Algorithm), "PGP")
+
+	r.NoError(t, c.EncryptPrivateKey(testPass))
+	r.NoError(t, c.LoadPrivateKey())
+	r.Exactly(t, c.GetPrivateKey(), c.privateKeyBlock)
+	r.NoError(t, c.DecryptPrivateKey(testPass))
+	r.Error(t, c.DecryptPrivateKey(testPass[:len(testPass)-1]))
+
+	c, err = New(&opts)
+	r.NoError(t, err)
+	r.NoError(t, c.EnableAutoRelease().CreatePgpPrivateKey(RSA4096))
+	r.Exactly(t, c.pgp, c.Pgp())
+	p := c.Pgp()
+	r.NotEqual(t, packet.PrivateKey{}, *p)
+	r.NotNil(t, p)
+	r.NoError(t, c.SetUnsafePrivateKey())
+	r.Nil(t, c.Pgp())
+	r.Exactly(t, packet.PrivateKey{}, *p)
 }
 
 func TestCertificate_ParseX509(t *testing.T) {

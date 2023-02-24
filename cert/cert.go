@@ -31,6 +31,8 @@ const (
 	PrivateKeyKey    = "PRIVATE KEY"
 	EcPrivateKeyKey  = "EC PRIVATE KEY"
 	RsaPrivateKeyKey = "RSA PRIVATE KEY"
+	PgpPrivateKeyKey = "PGP PRIVATE KEY BLOCK"
+	PgpPublicKeyKey  = "PGP PUBLIC KEY BLOCK"
 
 	// MaxSANLen is not an actual RFC5280 constraint, 4096 should suffice.
 	MaxSANLen         = 4096
@@ -223,17 +225,23 @@ func (c *Certificate) CreatePrivateKey(keyType string) (err error) {
 		return errors.New("no such algorithm")
 	}
 
+	parseRsa := func(opts []string) (size RsaSize, err error) {
+		err = assertion.AssertExactly(len(opts), 2)
+		if err != nil {
+			err = fmt.Errorf("%v: unable to retrieve algorithm size", err)
+			return
+		}
+		size, err = parseRsaSize(opts[1])
+		return
+	}
+
 	opts := strings.Split(keyType, ".")
 	switch strings.ToUpper(opts[0]) {
 	case AlgorithmToString(Rsa):
-		err = assertion.AssertExactly(len(opts), 2)
-		if err != nil {
-			return fmt.Errorf("%v: unable to retrieve algorithm size", err)
-		}
 		var size RsaSize
-		size, err = parseRsaSize(opts[1])
+		size, err = parseRsa(opts)
 		if err != nil {
-			return err
+			return
 		}
 		err = c.CreateRsaPrivateKey(size)
 
@@ -251,6 +259,14 @@ func (c *Certificate) CreatePrivateKey(keyType string) (err error) {
 
 	case AlgorithmToString(Ed25591):
 		err = c.CreateEd25519PrivateKey()
+
+	case AlgorithmToString(Pgp):
+		var size RsaSize
+		size, err = parseRsa(opts)
+		if err != nil {
+			return
+		}
+		err = c.CreatePgpPrivateKey(size)
 
 	default:
 		return errors.New("no such algorithm")
@@ -322,9 +338,12 @@ func (c *Certificate) sign(sc *Certificate) (err error) {
 	} else if sc.ecdsa != nil {
 		pub = sc.EcdsaPublicKey()
 		priv = sc.ecdsa
-	} else {
+	} else if sc.ed25519 != nil {
 		pub = sc.Ed25519PublicCryptoKey()
 		priv = sc.ed25519
+	} else {
+		err = errors.New("no signing key found")
+		return
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, c.template, sc.template, pub, priv)
@@ -428,8 +447,10 @@ func (c *Certificate) getPrivateKeyPem() (pb pem.Block, err error) {
 		pemBlk, err = c.RsaToPem()
 	} else if c.ecdsa != nil {
 		pemBlk, err = c.EcdsaToPem()
-	} else {
+	} else if c.ed25519 != nil {
 		pemBlk, err = c.Ed25519ToPem()
+	} else {
+		pemBlk, err = c.PgpToPem()
 	}
 	pb = *pemBlk
 	return
@@ -562,17 +583,11 @@ func (c *Certificate) loadRawPrivateKey(raw []byte) (err error) {
 		}
 		c.ed25519 = &k
 
-	//case Pgp:
-	//	key, err = openpgp.ReadEntity(rawKey)
-	//	if err != nil {
-	//		return
-	//	}
-	//	var k packet.PrivateKey
-	//	k, ok = key.(packet.PrivateKey)
-	//	if !ok {
-	//		return errors.New("unable to cast ed25519 private key")
-	//	}
-	//	c.ed25519 = &k
+	case Pgp:
+		c.pgp, err = c.parsePgpPrivateKey(rawKey)
+		if err != nil {
+			return
+		}
 
 	default:
 		return ErrNoSuchAlgorithm
@@ -595,6 +610,16 @@ func (c *Certificate) PrivateKeyBlock() (blk pem.Block, err error) {
 	case Ed25591:
 		keyType = PrivateKeyKey
 		blk.Bytes, err = x509.MarshalPKCS8PrivateKey(*c.Ed25519())
+
+	case Pgp:
+		var p *pem.Block
+		p, err = c.PgpToPem()
+		if err != nil {
+			return
+		}
+
+		keyType = p.Type
+		blk.Bytes = p.Bytes
 
 	default:
 		err = ErrNoSuchAlgorithm
@@ -646,6 +671,10 @@ func (c *Certificate) release() {
 	if c.ed25519 != nil {
 		*c.ed25519 = ed25519.PrivateKey{}
 		c.ed25519 = nil
+	}
+	if c.pgp != nil {
+		*c.pgp = packet.PrivateKey{}
+		c.pgp = nil
 	}
 	for i := range c.privateKeyBlock.Data {
 		c.privateKeyBlock.Data[i] = 0
