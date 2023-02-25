@@ -2,7 +2,6 @@ package cert
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/pem"
@@ -61,13 +60,8 @@ func (c *Certificate) CreatePgpPrivateKey(size RsaSize) (err error) {
 	return
 }
 
-// PgpPublicCryptoKey returns the uncasted crypto.PublicKey of the Certificate.
-func (c *Certificate) PgpPublicCryptoKey() (key crypto.PublicKey) {
-	return c.pgp.PublicKey
-}
-
-func (c *Certificate) PgpPublicKey() *packet.PublicKey {
-	return &c.pgp.PublicKey
+func (c *Certificate) Pgp() *packet.PrivateKey {
+	return c.pgp
 }
 
 func (c *Certificate) PgpToPem() (p *pem.Block, err error) {
@@ -98,61 +92,6 @@ func (c *Certificate) PgpToPem() (p *pem.Block, err error) {
 		Type:  PgpPrivateKeyKey,
 		Bytes: body,
 	}, nil
-}
-
-func (c *Certificate) loadPrivateKey() (key *packet.PrivateKey, err error) {
-	buf := bytes.NewReader(c.PrivateKey)
-	a, err := armor.Decode(buf)
-	if err != nil {
-		return
-	}
-	if a.Type != openpgp.PrivateKeyType {
-		err = errors.New("invalid private key")
-	}
-	pr := packet.NewReader(a.Body)
-	p, err := pr.Next()
-	if err != nil {
-		return
-	}
-	key, ok := p.(*packet.PrivateKey)
-	if !ok {
-		err = errors.New("invalid private key")
-	}
-	return
-}
-
-func (c *Certificate) pgpPublicToPem() (p *pem.Block, err error) {
-	if c.pgp == nil {
-		return nil, errPrivateKeyCannotBeNil
-	}
-
-	buf := &bytes.Buffer{}
-	privW, err := armor.Encode(buf, openpgp.PublicKeyType, nil)
-	if err != nil {
-		return
-	}
-	err = c.pgp.PublicKey.Serialize(privW)
-	if err != nil {
-		return
-	}
-	err = privW.Close()
-	if err != nil {
-		return
-	}
-
-	body, err := io.ReadAll(buf)
-	if err != nil {
-		return
-	}
-
-	return &pem.Block{
-		Type:  PgpPublicKeyKey,
-		Bytes: body,
-	}, nil
-}
-
-func (c *Certificate) Pgp() *packet.PrivateKey {
-	return c.pgp
 }
 
 func (c *Certificate) parsePgpPrivateKey(key []byte) (k *packet.PrivateKey, err error) {

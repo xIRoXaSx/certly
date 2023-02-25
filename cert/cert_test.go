@@ -661,11 +661,6 @@ func TestCertificate_CreatePgpPrivateKey(t *testing.T) {
 	pm, err := c.PgpToPem()
 	r.NoError(t, err)
 	r.NotNil(t, pm)
-	pub := c.PgpPublicCryptoKey()
-	r.NotNil(t, pub)
-	pubKey := c.PgpPublicKey()
-	r.NoError(t, err)
-	r.NotNil(t, pubKey)
 	r.NoError(t, c.SetUnsafePrivateKey())
 	r.Exactly(t, AlgorithmToString(c.Algorithm), "PGP")
 
