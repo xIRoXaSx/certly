@@ -44,7 +44,7 @@ func (c *Certificate) Ed25519PublicCryptoKey() (key crypto.PublicKey) {
 
 func (c *Certificate) Ed25519ToPem() (p *pem.Block, err error) {
 	if c.ed25519 == nil {
-		return nil, errPrivateKeyCannotBeNil
+		return nil, ErrPrivateKeyCannotBeNil
 	}
 
 	der, err := x509.MarshalPKCS8PrivateKey(*c.ed25519)

@@ -7,9 +7,9 @@ import (
 var (
 	ErrNoSuchAlgorithm       = errors.New("no such algorithm implemented")
 	ErrCipherMsgAuthFailed   = errors.New("message authentication failed")
+	ErrPrivateKeyCannotBeNil = errors.New("private key cannot be nil")
 	errCertToSignCannotBeNil = errors.New("certificate to sign cannot be nil")
 	errSignerCannotBeNil     = errors.New("signer cannot be nil")
-	errPrivateKeyCannotBeNil = errors.New("private key cannot be nil")
 )
 
 func mapToCertError(err error) error {

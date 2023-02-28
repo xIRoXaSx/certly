@@ -81,7 +81,7 @@ func (c *Certificate) EcdsaPublicKey() (key *ecdsa.PublicKey) {
 
 func (c *Certificate) EcdsaToPem() (p *pem.Block, err error) {
 	if c.ecdsa == nil {
-		return nil, errPrivateKeyCannotBeNil
+		return nil, ErrPrivateKeyCannotBeNil
 	}
 
 	der, err := x509.MarshalECPrivateKey(c.ecdsa)

@@ -8,7 +8,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -21,9 +20,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xiroxasx/certly"
 	"github.com/xiroxasx/certly/cert/assertion"
 	"golang.org/x/crypto/openpgp/packet"
-	"golang.org/x/crypto/pbkdf2"
 )
 
 const (
@@ -31,8 +30,6 @@ const (
 	PrivateKeyKey    = "PRIVATE KEY"
 	EcPrivateKeyKey  = "EC PRIVATE KEY"
 	RsaPrivateKeyKey = "RSA PRIVATE KEY"
-	PgpPrivateKeyKey = "PGP PRIVATE KEY BLOCK"
-	PgpPublicKeyKey  = "PGP PUBLIC KEY BLOCK"
 
 	// MaxSANLen is not an actual RFC5280 constraint, 4096 should suffice.
 	MaxSANLen         = 4096
@@ -231,7 +228,7 @@ func (c *Certificate) CreatePrivateKey(keyType string) (err error) {
 			err = fmt.Errorf("%v: unable to retrieve algorithm size", err)
 			return
 		}
-		size, err = parseRsaSize(opts[1])
+		size, err = ParseRsaSize(opts[1])
 		return
 	}
 
@@ -259,14 +256,6 @@ func (c *Certificate) CreatePrivateKey(keyType string) (err error) {
 
 	case AlgorithmToString(Ed25591):
 		err = c.CreateEd25519PrivateKey()
-
-	case AlgorithmToString(Pgp):
-		var size RsaSize
-		size, err = parseRsa(opts)
-		if err != nil {
-			return
-		}
-		err = c.CreatePgpPrivateKey(size)
 
 	default:
 		return errors.New("no such algorithm")
@@ -411,7 +400,8 @@ func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
 		c.autoRelease()
 	}()
 
-	key, salt = deriveKey(pass, nil)
+	// TODO: use crypt package instead.
+	key, salt = certly.DeriveKey(pass, nil)
 	blk, err = aes.NewCipher(key)
 	if err != nil {
 		return
@@ -450,7 +440,10 @@ func (c *Certificate) getPrivateKeyPem() (pb pem.Block, err error) {
 	} else if c.ed25519 != nil {
 		pemBlk, err = c.Ed25519ToPem()
 	} else {
-		pemBlk, err = c.PgpToPem()
+		err = errors.New("no data found")
+	}
+	if err != nil {
+		return
 	}
 	pb = *pemBlk
 	return
@@ -514,7 +507,7 @@ func (c *Certificate) DecryptPrivateKey(pass []byte) (err error) {
 	enc := c.privateKeyBlock.Data
 	salt := c.Salt
 	nonce := c.Nonce
-	derivedKey, _ = deriveKey(pass, salt)
+	derivedKey, _ = certly.DeriveKey(pass, salt)
 	blk, err = aes.NewCipher(derivedKey)
 	if err != nil {
 		return
@@ -583,12 +576,6 @@ func (c *Certificate) loadRawPrivateKey(raw []byte) (err error) {
 		}
 		c.ed25519 = &k
 
-	case Pgp:
-		c.pgp, err = c.parsePgpPrivateKey(rawKey)
-		if err != nil {
-			return
-		}
-
 	default:
 		return ErrNoSuchAlgorithm
 	}
@@ -610,16 +597,6 @@ func (c *Certificate) PrivateKeyBlock() (blk pem.Block, err error) {
 	case Ed25591:
 		keyType = PrivateKeyKey
 		blk.Bytes, err = x509.MarshalPKCS8PrivateKey(*c.Ed25519())
-
-	case Pgp:
-		var p *pem.Block
-		p, err = c.PgpToPem()
-		if err != nil {
-			return
-		}
-
-		keyType = p.Type
-		blk.Bytes = p.Bytes
 
 	default:
 		err = ErrNoSuchAlgorithm
@@ -816,17 +793,6 @@ func ParseCertificateOptions(crt *x509.Certificate) (opts *Options, err error) {
 		IsCA:               crt.IsCA,
 		Expiration:         Expiration{NotBefore: crt.NotBefore, NotAfter: crt.NotAfter},
 	}, nil
-}
-
-func deriveKey(phrase []byte, salt []byte) (key, s []byte) {
-	if len(salt) == 0 {
-		salt = make([]byte, 8)
-		_, err := rand.Read(salt)
-		if err != nil {
-			return
-		}
-	}
-	return pbkdf2.Key(phrase, salt, 4096, 32, sha256.New), salt
 }
 
 func (c *Certificate) ensureMxInit() *Certificate {

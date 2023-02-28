@@ -17,7 +17,7 @@ const (
 	RSA4096 RsaSize = 4096
 )
 
-func parseRsaSize(size string) (s RsaSize, err error) {
+func ParseRsaSize(size string) (s RsaSize, err error) {
 	i, err := strconv.ParseInt(size, 10, 32)
 	if err != nil {
 		return
@@ -63,7 +63,7 @@ func (c *Certificate) RsaPublicKey() (key *rsa.PublicKey) {
 
 func (c *Certificate) RsaToPem() (p *pem.Block, err error) {
 	if c.rsa == nil {
-		return nil, errPrivateKeyCannotBeNil
+		return nil, ErrPrivateKeyCannotBeNil
 	}
 
 	der, err := x509.MarshalPKCS8PrivateKey(c.rsa)
