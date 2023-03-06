@@ -8,7 +8,6 @@ import (
 	"io"
 	"sync"
 
-	"github.com/xiroxasx/certly"
 	"golang.org/x/crypto/pbkdf2"
 )
 
@@ -38,16 +37,14 @@ func (c *Crypt) Encrypt(pass []byte) (err error) {
 	)
 	defer func() {
 		// Zero values.
-		b := [][]byte{pass, c.data, key}
+		b := []*[]byte{&pass, &c.data, &key, &salt}
 		for i := range b {
-			for j := range b[i] {
-				b[i][j] = 0
+			for j := range *b[i] {
+				(*b[i])[j] = 0
 			}
-			b[i] = nil
+			*b[i] = nil
 		}
 		blk = nil
-		c.data = nil
-		pass = nil
 	}()
 
 	c.mx.Lock()
@@ -69,8 +66,10 @@ func (c *Crypt) Encrypt(pass []byte) (err error) {
 		return
 	}
 	c.encrypted = gcm.Seal(nonce, nonce, c.data, nil)
-	c.salt = salt
-	c.nonce = nonce
+	c.salt = make([]byte, len(salt))
+	copy(c.salt, salt)
+	c.nonce = make([]byte, len(nonce))
+	copy(c.nonce, nonce)
 	return
 }
 
@@ -90,12 +89,12 @@ func (c *Crypt) Decrypt(pass []byte) (err error) {
 	)
 	defer func() {
 		// Zero values.
-		b := [][]byte{derivedKey, raw, pass, enc, salt, nonce}
+		b := []*[]byte{&derivedKey, &raw, &pass, &enc, &salt, &nonce, &c.data}
 		for i := range b {
-			for j := range b[i] {
-				b[i][j] = 0
+			for j := range *b[i] {
+				(*b[i])[j] = 0
 			}
-			b[i] = nil
+			*b[i] = nil
 		}
 		gcm = nil
 		blk = nil
@@ -107,7 +106,7 @@ func (c *Crypt) Decrypt(pass []byte) (err error) {
 	copy(enc, c.data)
 	copy(salt, c.salt)
 	copy(nonce, c.nonce)
-	derivedKey, _ = certly.DeriveKey(pass, salt)
+	derivedKey, _ = deriveKey(pass, salt)
 	blk, err = aes.NewCipher(derivedKey)
 	if err != nil {
 		return
@@ -143,12 +142,12 @@ func (c *Crypt) Nonce() []byte {
 }
 
 func (c *Crypt) Release() {
-	fields := [][]byte{c.data, c.decrypted, c.encrypted, c.salt, c.nonce}
+	fields := []*[]byte{&c.data, &c.decrypted, &c.encrypted, &c.salt, &c.nonce}
 	for i := range fields {
-		for j := range fields[i] {
-			fields[i][j] = 0
+		for j := range *fields[i] {
+			(*fields[i])[j] = 0
 		}
-		fields[i] = nil
+		*fields[i] = nil
 	}
 }
 

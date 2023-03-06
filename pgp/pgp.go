@@ -71,7 +71,7 @@ func newPgp(opts Options) (p *Pgp, err error) {
 // Examples: RSA.4096, RSA.2048, RSA.1024.
 func (p *Pgp) CreatePrivateKey(keyType string) (err error) {
 	// Algorithm and option may only take up to 10 bytes.
-	err = assertion.AssertWithinRange(len(keyType), 7, 10)
+	err = assertion.AssertExactly(len(keyType), 8)
 	if err != nil {
 		return errors.New("no such algorithm")
 	}
@@ -184,25 +184,12 @@ func (p *Pgp) PrivateKeyToPem() (blk *pem.Block, err error) {
 	}, nil
 }
 
-func (p *Pgp) PrivateKeyBlock() (blk pem.Block, err error) {
-	pemBlk, err := p.PrivateKeyToPem()
-	if err != nil {
-		return
-	}
-
-	blk.Bytes = pemBlk.Bytes
-	blk.Type = pemBlk.Type
-	return
-}
-
 // LoadPrivateKey loads the private key.
 // Note that the private key might be encrypted.
+// The caller must ensure to lock Pgp.mx.
 // Get the key via *Certificate.GetPrivateKey or *Certificate.PrivateKey.
 func (p *Pgp) LoadPrivateKey() (err error) {
 	p.ensureMxInit()
-	p.mx.Lock()
-	defer p.mx.Unlock()
-
 	p.privateKeyBlock = cert.Block{
 		Algorithm: cert.Pgp,
 		Data:      p.PrivateKey,
@@ -268,24 +255,6 @@ func (p *Pgp) SetUnsafePrivateKey() (err error) {
 	return
 }
 
-func (p *Pgp) GetPrivateKey() cert.Block {
-	return p.privateKeyBlock
-}
-
-func (p *Pgp) getPrivateKeyPem() (pb pem.Block, err error) {
-	var pemBlk *pem.Block
-	if p.pgp != nil {
-		pemBlk, err = p.PrivateKeyToPem()
-	} else {
-		err = errors.New("no data found")
-	}
-	if err != nil {
-		return
-	}
-	pb = *pemBlk
-	return
-}
-
 // EncryptPrivateKey encrypts the private key with the given pass.
 func (p *Pgp) EncryptPrivateKey(pass []byte) (err error) {
 	blk, err := p.getPrivateKeyPem()
@@ -306,66 +275,33 @@ func (p *Pgp) EncryptPrivateKey(pass []byte) (err error) {
 	copy(p.Salt, c.Salt())
 	copy(p.Nonce, c.Nonce())
 	copy(p.PrivateKey, enc)
+	p.autoRelease()
+	return
+}
 
-	//var (
-	//	key  []byte
-	//	salt []byte
-	//	enc  []byte
-	//	cBlk cipher.Block
-	//	pb   pem.Block
-	//)
-	//defer func() {
-	//	// Zero values.
-	//	b := [][]byte{key, salt, enc}
-	//	for i := range b {
-	//		for j := range b[i] {
-	//			b[i][j] = 0
-	//		}
-	//		b[i] = nil
-	//	}
-	//	cBlk = nil
-	//	pb = pem.Block{}
-	//}()
-	//
-	//p.ensureMxInit()
-	//p.mx.Lock()
-	//defer func() {
-	//	p.mx.Unlock()
-	//	p.autoRelease()
-	//}()
-	//
-	//key, salt = certly.DeriveKey(pass, nil)
-	//cBlk, err = aes.NewCipher(key)
-	//if err != nil {
-	//	return
-	//}
-	//gcm, err := cipher.NewGCM(cBlk)
-	//if err != nil {
-	//	return
-	//}
-	//nonce := make([]byte, gcm.NonceSize())
-	//_, err = io.ReadFull(rand.Reader, nonce)
-	//if err != nil {
-	//	return
-	//}
-	//
-	//pb, err = p.getPrivateKeyPem()
-	//if err != nil {
-	//	return
-	//}
-	//enc = gcm.Seal(nonce, nonce, pb.Bytes, nil)
-	//
-	//p.Salt = make([]byte, len(salt))
-	//p.Nonce = make([]byte, len(nonce))
-	//p.PrivateKey = make([]byte, len(enc))
-	//copy(p.Salt, salt)
-	//copy(p.Nonce, nonce)
-	//copy(p.PrivateKey, enc)
+func (p *Pgp) GetPrivateKey() cert.Block {
+	return p.privateKeyBlock
+}
+
+func (p *Pgp) getPrivateKeyPem() (pb pem.Block, err error) {
+	var pemBlk *pem.Block
+	if p.pgp != nil {
+		pemBlk, err = p.PrivateKeyToPem()
+	} else {
+		err = errors.New("no data found")
+	}
+	if err != nil {
+		return
+	}
+	pb = *pemBlk
 	return
 }
 
 // DecryptPrivateKey decrypts the private key.
 func (p *Pgp) DecryptPrivateKey(pass []byte) (err error) {
+	p.mx.Lock()
+	defer p.mx.Unlock()
+
 	if len(p.privateKeyBlock.Data) == 0 {
 		// Ensure that the private key is loaded.
 		err = p.LoadPrivateKey()
@@ -374,31 +310,29 @@ func (p *Pgp) DecryptPrivateKey(pass []byte) (err error) {
 		}
 	}
 
-	p.mx.Lock()
-	defer p.mx.Unlock()
-
 	var (
 		derivedKey []byte
 		raw        []byte
 	)
 	defer func() {
 		// Zero values.
-		b := [][]byte{derivedKey, raw, pass}
+		b := []*[]byte{&derivedKey, &raw, &pass}
 		for i := range b {
-			for j := range b[i] {
-				b[i][j] = 0
+			for j := range *b[i] {
+				(*b[i])[j] = 0
 			}
-			b[i] = nil
+			*b[i] = nil
 		}
 	}()
 
 	c := crypt.New(p.privateKeyBlock.Data, p.Salt, p.Nonce)
+	defer c.Release()
+
 	err = c.Decrypt(pass)
 	if err != nil {
 		return
 	}
-
-	p.pgp, err = p.parsePgpPrivateKey(raw)
+	p.pgp, err = p.parsePgpPrivateKey(c.Decrypted())
 	if err != nil {
 		return
 	}

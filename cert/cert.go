@@ -2,8 +2,6 @@ package cert
 
 import (
 	"crypto"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -13,15 +11,14 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/xiroxasx/certly"
 	"github.com/xiroxasx/certly/cert/assertion"
+	"github.com/xiroxasx/certly/crypt"
 	"golang.org/x/crypto/openpgp/packet"
 )
 
@@ -374,22 +371,19 @@ func (c *Certificate) SetUnsafePrivateKey() (err error) {
 // EncryptPrivateKey encrypts the private key with the given pass.
 func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
 	var (
-		key  []byte
 		salt []byte
 		enc  []byte
-		blk  cipher.Block
 		pb   pem.Block
 	)
 	defer func() {
 		// Zero values.
-		b := [][]byte{key, salt, enc}
+		b := []*[]byte{&pb.Bytes, &salt, &enc}
 		for i := range b {
-			for j := range b[i] {
-				b[i][j] = 0
+			for j := range *b[i] {
+				(*b[i])[j] = 0
 			}
-			b[i] = nil
+			*b[i] = nil
 		}
-		blk = nil
 		pb = pem.Block{}
 	}()
 
@@ -400,34 +394,23 @@ func (c *Certificate) EncryptPrivateKey(pass []byte) (err error) {
 		c.autoRelease()
 	}()
 
-	// TODO: use crypt package instead.
-	key, salt = certly.DeriveKey(pass, nil)
-	blk, err = aes.NewCipher(key)
-	if err != nil {
-		return
-	}
-	gcm, err := cipher.NewGCM(blk)
-	if err != nil {
-		return
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	_, err = io.ReadFull(rand.Reader, nonce)
-	if err != nil {
-		return
-	}
-
 	pb, err = c.getPrivateKeyPem()
 	if err != nil {
 		return
 	}
-	enc = gcm.Seal(nonce, nonce, pb.Bytes, nil)
+	cr := crypt.New(pb.Bytes, nil, nil)
+	defer cr.Release()
 
-	c.Salt = make([]byte, len(salt))
-	c.Nonce = make([]byte, len(nonce))
-	c.PrivateKey = make([]byte, len(enc))
-	copy(c.Salt, salt)
-	copy(c.Nonce, nonce)
-	copy(c.PrivateKey, enc)
+	err = cr.Encrypt(pass)
+	if err != nil {
+		return
+	}
+	c.Salt = make([]byte, len(cr.Salt()))
+	c.Nonce = make([]byte, len(cr.Nonce()))
+	c.PrivateKey = make([]byte, len(cr.Encrypted()))
+	copy(c.Salt, cr.Salt())
+	copy(c.Nonce, cr.Nonce())
+	copy(c.PrivateKey, cr.Encrypted())
 	return
 }
 
@@ -485,43 +468,24 @@ func (c *Certificate) DecryptPrivateKey(pass []byte) (err error) {
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
-	var (
-		derivedKey []byte
-		raw        []byte
-		gcm        cipher.AEAD
-		blk        cipher.Block
-	)
+	enc := make([]byte, len(c.privateKeyBlock.Data))
+	copy(enc, c.privateKeyBlock.Data)
 	defer func() {
 		// Zero values.
-		b := [][]byte{derivedKey, raw}
-		for i := range b {
-			for j := range b[i] {
-				b[i][j] = 0
-			}
-			b[i] = nil
+		for i := range enc {
+			enc[i] = 0
 		}
-		gcm = nil
-		blk = nil
+		enc = nil
 	}()
 
-	enc := c.privateKeyBlock.Data
-	salt := c.Salt
-	nonce := c.Nonce
-	derivedKey, _ = certly.DeriveKey(pass, salt)
-	blk, err = aes.NewCipher(derivedKey)
-	if err != nil {
-		return
-	}
-	gcm, err = cipher.NewGCM(blk)
-	if err != nil {
-		return
-	}
+	cr := crypt.New(enc, c.Salt, c.Nonce)
+	defer cr.Release()
 
-	raw, err = gcm.Open(nil, nonce, enc[gcm.NonceSize():], nil)
+	err = cr.Decrypt(pass)
 	if err != nil {
 		return
 	}
-	err = c.loadRawPrivateKey(raw)
+	err = c.loadRawPrivateKey(cr.Decrypted())
 	return
 }
 

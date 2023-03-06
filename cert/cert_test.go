@@ -94,16 +94,16 @@ func TestCertificate(t *testing.T) {
 	r.Exactly(t, opts, *parsedOpts)
 
 	// Test encryption and decryption.
-	testPass := []byte("This_Is_Just_A_Simple_Test_Value")
+	testPass := "This_Is_Just_A_Simple_Test_Value"
 	pk := c.rsa
 	pkPem := c.PrivateKey
 	r.True(t, c.IsUnsafe())
-	r.NoError(t, c.EncryptPrivateKey(testPass))
+	r.NoError(t, c.EncryptPrivateKey([]byte(testPass)))
 	r.False(t, c.IsUnsafe())
 	r.NoError(t, c.LoadPrivateKey())
 	c.rsa = nil
 	c.PrivateKey = nil
-	r.NoError(t, c.DecryptPrivateKey(testPass))
+	r.NoError(t, c.DecryptPrivateKey([]byte(testPass)))
 	r.False(t, c.IsUnsafe())
 	r.Exactly(t, pk, c.rsa)
 	r.Exactly(t, c.rsa, c.Rsa())
@@ -246,7 +246,7 @@ func TestCertificate_Release(t *testing.T) {
 
 	caOpts := defaultOpts()
 	caOpts.IsCA = true
-	caPass := []byte("SomeTestPassphrase")
+	caPass := "SomeTestPassphrase"
 	keyType := "RSA.1024"
 	algo := strings.Split(keyType, ".")[0]
 	ca, err := New(&caOpts)
@@ -255,7 +255,7 @@ func TestCertificate_Release(t *testing.T) {
 	r.NoError(t, ca.SignSelf())
 	r.Empty(t, ca.PrivateKey)
 	caPriv := ca.privateKeyBlock.Data
-	r.NoError(t, ca.EncryptPrivateKey(caPass))
+	r.NoError(t, ca.EncryptPrivateKey([]byte(caPass)))
 	encCaPriv := ca.PrivateKey
 	r.NotEmpty(t, encCaPriv)
 	checkAllEmpty(t, ca)
@@ -266,16 +266,23 @@ func TestCertificate_Release(t *testing.T) {
 	// Check if certs cannot be signed with current CA state.
 	c := newTestCert(keyType, true).EnableAutoRelease()
 	r.Error(t, c.SignWith(ca))
-	r.Error(t, ca.DecryptPrivateKey(caPass[:len(caPass)-1]))
-	r.NoError(t, ca.DecryptPrivateKey(caPass))
+	pass := []byte(caPass)
+	salt := make([]byte, len(ca.Salt))
+	nonce := make([]byte, len(ca.Nonce))
+	copy(salt, ca.Salt)
+	copy(nonce, ca.Nonce)
+	r.Error(t, ca.DecryptPrivateKey(pass[:len(pass)-1]))
 
+	copy(ca.Salt, salt)
+	copy(ca.Nonce, nonce)
+	r.NoError(t, ca.DecryptPrivateKey([]byte(caPass)))
 	c = newTestCert(keyType, true)
 	r.Error(t, c.SignWith(ca))
 	pemBlk, err := c.getPrivateKeyPem()
 	r.NoError(t, err)
 	priv := pemBlk.Bytes
 	checkFilled(t, algo, c)
-	r.NoError(t, c.EncryptPrivateKey(append(caPass, '!')))
+	r.NoError(t, c.EncryptPrivateKey(append([]byte(caPass), '!')))
 	checkFilled(t, algo, c)
 	c.Release()
 	checkAllEmpty(t, c)
@@ -283,7 +290,7 @@ func TestCertificate_Release(t *testing.T) {
 	// Check if field can be loaded again.
 	r.NoError(t, c.LoadPrivateKey())
 	r.Exactly(t, c.PrivateKey, c.privateKeyBlock.Data)
-	r.NoError(t, c.DecryptPrivateKey(append(caPass, '!')))
+	r.NoError(t, c.DecryptPrivateKey(append([]byte(caPass), '!')))
 	pemBlk, err = c.getPrivateKeyPem()
 	r.NoError(t, err)
 	r.Exactly(t, pemBlk.Bytes, priv)
@@ -291,6 +298,20 @@ func TestCertificate_Release(t *testing.T) {
 		ca.Release()
 		checkAllEmpty(t, ca)
 	}()
+
+	// Check if passed slice is zero-ed.
+	pass = []byte("SomePass")
+	expectedPass := make([]byte, len(pass))
+	for i := 0; i < len(pass); i++ {
+		expectedPass[i] = 0
+	}
+	c = newTestCert(keyType, true)
+	r.NoError(t, c.EncryptPrivateKey(pass))
+	r.Exactly(t, expectedPass, pass)
+
+	pass = []byte("SomePass")
+	r.NoError(t, c.DecryptPrivateKey(pass))
+	r.Exactly(t, expectedPass, pass)
 
 	rsaKey := AlgorithmToString(Rsa)
 	ecdsaKey := AlgorithmToString(Ecdsa)
@@ -459,7 +480,7 @@ func TestCertificate_Rsa(t *testing.T) {
 	t.Parallel()
 
 	// Test encryption and decryption.
-	testPass := []byte("This_Is_Just_A_Simple_Test_Value")
+	testPass := "This_Is_Just_A_Simple_Test_Value"
 	opts := defaultOpts()
 	var c *Certificate
 	sizes := []RsaSize{RSA1024, RSA2048, RSA4096}
@@ -494,14 +515,22 @@ func TestCertificate_Rsa(t *testing.T) {
 	}
 
 	// Test private key encryption.
-	r.NoError(t, c.EncryptPrivateKey(testPass))
+	r.NoError(t, c.EncryptPrivateKey([]byte(testPass)))
 	r.NoError(t, c.LoadPrivateKey())
 	r.Exactly(t, c.GetPrivateKey(), c.privateKeyBlock)
 	r.Exactly(t, c.GetPrivateKey().Data, c.PrivateKey)
 
 	// Test private key decryption.
-	r.Error(t, c.DecryptPrivateKey(testPass[:len(testPass)-1]))
-	r.NoError(t, c.DecryptPrivateKey(testPass))
+	pass := []byte(testPass)
+	salt := make([]byte, len(c.Salt))
+	nonce := make([]byte, len(c.Nonce))
+	copy(salt, c.Salt)
+	copy(nonce, c.Nonce)
+	r.Error(t, c.DecryptPrivateKey(pass[:len(pass)-1]))
+
+	copy(c.Salt, salt)
+	copy(c.Nonce, nonce)
+	r.NoError(t, c.DecryptPrivateKey([]byte(testPass)))
 	blk, err := c.PrivateKeyBlock()
 	r.NoError(t, err)
 	r.NotEmpty(t, blk.Bytes)
@@ -525,7 +554,7 @@ func TestCertificate_Ecdsa(t *testing.T) {
 	t.Parallel()
 
 	// Test encryption and decryption.
-	testPass := []byte("This_Is_Just_A_Simple_Test_Value")
+	testPass := "This_Is_Just_A_Simple_Test_Value"
 	opts := defaultOpts()
 	curves := []Curve{P224, P256, P384, P521}
 	var c *Certificate
@@ -558,11 +587,12 @@ func TestCertificate_Ecdsa(t *testing.T) {
 		r.Exactly(t, AlgorithmToString(c.Algorithm), "ECDSA")
 	}
 
-	r.NoError(t, c.EncryptPrivateKey(testPass))
+	r.NoError(t, c.EncryptPrivateKey([]byte(testPass)))
 	r.NoError(t, c.LoadPrivateKey())
 	r.Exactly(t, c.GetPrivateKey(), c.privateKeyBlock)
-	r.NoError(t, c.DecryptPrivateKey(testPass))
-	r.Error(t, c.DecryptPrivateKey(testPass[:len(testPass)-1]))
+	r.NoError(t, c.DecryptPrivateKey([]byte(testPass)))
+	pass := []byte(testPass)
+	r.Error(t, c.DecryptPrivateKey(pass[:len(pass)-1]))
 	blk, err := c.PrivateKeyBlock()
 	r.NoError(t, err)
 	r.NotEmpty(t, blk.Bytes)
@@ -586,7 +616,7 @@ func TestCertificate_Ed25519(t *testing.T) {
 	t.Parallel()
 
 	// Test encryption and decryption.
-	testPass := []byte("This_Is_Just_A_Simple_Test_Value")
+	testPass := "This_Is_Just_A_Simple_Test_Value"
 	opts := defaultOpts()
 	var c *Certificate
 	var err error
@@ -616,11 +646,12 @@ func TestCertificate_Ed25519(t *testing.T) {
 	r.NoError(t, c.SetUnsafePrivateKey())
 	r.Exactly(t, AlgorithmToString(c.Algorithm), "ED25591")
 
-	r.NoError(t, c.EncryptPrivateKey(testPass))
+	r.NoError(t, c.EncryptPrivateKey([]byte(testPass)))
 	r.NoError(t, c.LoadPrivateKey())
 	r.Exactly(t, c.GetPrivateKey(), c.privateKeyBlock)
-	r.NoError(t, c.DecryptPrivateKey(testPass))
-	r.Error(t, c.DecryptPrivateKey(testPass[:len(testPass)-1]))
+	r.NoError(t, c.DecryptPrivateKey([]byte(testPass)))
+	pass := []byte(testPass)
+	r.Error(t, c.DecryptPrivateKey(pass[:len(pass)-1]))
 	blk, err := c.PrivateKeyBlock()
 	r.NoError(t, err)
 	r.NotEmpty(t, blk.Bytes)
